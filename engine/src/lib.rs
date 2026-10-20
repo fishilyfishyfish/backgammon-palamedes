@@ -7,14 +7,17 @@ pub mod board;
 pub mod eval;
 pub mod features;
 pub mod movegen;
+pub mod nn;
 pub mod notation;
 pub mod play;
 pub mod rng;
 pub mod search;
+pub mod train;
 pub mod wasm;
 
 pub use board::{BAR, Board, OFF, Side};
 pub use eval::{Evaluator, HandEval, OutcomeProbs};
 pub use features::{BlotInfo, Features, SideFeatures, compute_features};
 pub use movegen::{Move, Step, legal_moves, turn_options};
+pub use nn::NnEval;
 pub use search::{best_move, rank_moves};

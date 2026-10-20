@@ -109,6 +109,16 @@ pub struct MatchStats {
 }
 
 impl MatchStats {
+    pub fn merge(&mut self, o: &MatchStats) {
+        self.pairs += o.pairs;
+        self.a_points += o.a_points;
+        self.a_wins += o.a_wins;
+        self.games += o.games;
+        self.a_gammons += o.a_gammons;
+        self.b_gammons += o.b_gammons;
+        self.sum_sq_pair += o.sum_sq_pair;
+    }
+
     /// 한 판당 평균 점수(A 기준).
     pub fn ppg(&self) -> f64 {
         self.a_points as f64 / self.games as f64
@@ -153,6 +163,44 @@ pub fn mirror_match(a: &mut dyn Player, b: &mut dyn Player, pairs: u32, seed0: u
         st.pairs += 1;
         st.a_points += pair;
         st.sum_sq_pair += (pair * pair) as f64;
+    }
+    st
+}
+
+/// `mirror_match`를 스레드로 나눠 돈다. 쌍 i는 어느 스레드에서 돌든 시드 seed0 + i를 쓴다.
+/// 플레이어는 스레드마다 `make_a(t)`, `make_b(t)`로 새로 만든다.
+pub fn parallel_mirror_match<A, B>(
+    make_a: A,
+    make_b: B,
+    pairs: u32,
+    seed0: u64,
+    threads: usize,
+) -> MatchStats
+where
+    A: Fn(usize) -> Box<dyn Player> + Sync,
+    B: Fn(usize) -> Box<dyn Player> + Sync,
+{
+    let threads = threads.max(1);
+    let chunk = pairs.div_ceil(threads as u32);
+    let parts: Vec<MatchStats> = std::thread::scope(|sc| {
+        let hs: Vec<_> = (0..threads)
+            .map(|t| {
+                let (make_a, make_b) = (&make_a, &make_b);
+                sc.spawn(move || {
+                    let start = t as u32 * chunk;
+                    let n = chunk.min(pairs.saturating_sub(start));
+                    let (mut a, mut b) = (make_a(t), make_b(t));
+                    mirror_match(a.as_mut(), b.as_mut(), n, seed0.wrapping_add(start as u64))
+                })
+            })
+            .collect();
+        hs.into_iter()
+            .map(|h| h.join().expect("match thread"))
+            .collect()
+    });
+    let mut st = MatchStats::default();
+    for p in &parts {
+        st.merge(p);
     }
     st
 }

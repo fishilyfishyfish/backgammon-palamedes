@@ -68,7 +68,7 @@ for (let g = 0; g < games; g++) {
   // 판마다 설정(말 색, 홈 위치, 상대)을 바꿔 가며 둔다. 뒤집힌 판에서도 터치 영역이 맞는지 확인.
   await page.locator(`[data-view="color:${g % 2 ? 'black' : 'white'}"]`).click();
   await page.locator(`[data-view="home:${g % 4 >= 2 ? 'left' : 'right'}"]`).click();
-  await page.locator(`[data-view="ai:${g % 3 === 2 ? 'random' : 'baseline'}"]`).click();
+  await page.locator(`[data-view="ai:${['nn', 'baseline', 'random'][g % 3]}"]`).click();
   for (let guard = 0; guard < 3000; guard++) {
     await waitIdle();
     const s = await state();

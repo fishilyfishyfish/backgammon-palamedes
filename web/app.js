@@ -1,4 +1,4 @@
-// 대국 화면: 사람 vs AI(기준선 엔진 또는 랜덤). 규칙 판단은 전부 엔진(Worker)에 맡긴다.
+// 대국 화면: 사람 vs AI(신경망, 기준선 엔진, 랜덤 중 선택). 규칙 판단은 전부 엔진(Worker)에 맡긴다.
 // 엔진 진영은 사람 = 0, AI = 1로 고정이고, 말 색과 판 방향은 화면 설정(S.view)일 뿐이다.
 
 const HUMAN = 0;
@@ -77,8 +77,8 @@ const S = {
   pips: [167, 167],
   busy: false,
   // 설정. color: 사람 말 색('white'|'black'), home: 사람 홈 위치('right'|'left'),
-  // ai: 상대('baseline' = 손 평가 + 1수 탐색, 'random' = 합법수 중 무작위).
-  view: { color: 'white', home: 'right', ai: 'baseline', ...storage.get('palamedes.view', {}) },
+  // ai: 상대('nn' = 신경망 + 1수 탐색, 'baseline' = 손 평가 + 1수 탐색, 'random' = 합법수 중 무작위).
+  view: { color: 'white', home: 'right', ai: 'nn', ...storage.get('palamedes.view', {}) },
 };
 
 // ---------- DOM ----------
@@ -422,7 +422,8 @@ async function aiTurn(dice) {
     m = moves[Math.floor(Math.random() * moves.length)];
   } else {
     // 에퀴티가 가장 높은 수. 순위 목록은 5단계 설명 층에서 쓴다.
-    m = (await call('rank_moves_json', S.board, AI, dice[0], dice[1]))[0];
+    const engine = S.view.ai === 'baseline' ? 0 : 1;
+    m = (await call('rank_moves_json', S.board, AI, dice[0], dice[1], engine))[0];
   }
   if (m.steps.length === 0) {
     setStatus(`AI ${dice[0]}-${dice[1]}: 둘 수 있는 수가 없어.`);
