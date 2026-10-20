@@ -210,6 +210,30 @@ button { font: inherit; }
 
 .foot { margin-top: auto; }
 
+.view-settings { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.seg {
+  display: grid;
+  grid-template-columns: 3.5em 1fr 1fr;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.seg-label { color: var(--muted); font-size: 0.8rem; padding: 0 4px; white-space: nowrap; }
+.seg-btn {
+  min-height: 44px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.seg-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.seg-btn:focus-visible { outline: 3px solid var(--select); outline-offset: 1px; }
+
 /* SVG */
 .frame { fill: var(--frame); }
 .felt { fill: var(--felt); }

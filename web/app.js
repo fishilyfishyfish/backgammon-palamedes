@@ -1,4 +1,5 @@
-// 대국 화면: 사람(백) vs 랜덤 AI(흑). 규칙 판단은 전부 엔진(Worker)에 맡긴다.
+// 대국 화면: 사람 vs 랜덤 AI. 규칙 판단은 전부 엔진(Worker)에 맡긴다.
+// 엔진 진영은 사람 = 0, AI = 1로 고정이고, 말 색과 판 방향은 화면 설정(S.view)일 뿐이다.
 
 const HUMAN = 0;
 const AI = 1;
@@ -63,7 +64,7 @@ const S = {
   board: null,
   turn: HUMAN,
   dice: null, // [d1, d2]
-  openingDice: null, // [백, 흑]
+  openingDice: null, // [사람, AI]
   turnStart: null,
   groups: [], // 이번 턴에 둔 선택지별 걸음 묶음(무르기 단위)
   ts: null, // 엔진 turn_state
@@ -75,6 +76,8 @@ const S = {
   score: storage.get('palamedes.score', { human: 0, ai: 0 }),
   pips: [167, 167],
   busy: false,
+  // 화면 설정. color: 사람 말 색('white'|'black'), home: 사람 홈 위치('right'|'left').
+  view: { color: 'white', home: 'right', ...storage.get('palamedes.view', {}) },
 };
 
 // ---------- DOM ----------
@@ -84,6 +87,8 @@ const els = {
   status: $('status'), roll: $('btn-roll'), undo: $('btn-undo'), done: $('btn-done'), newGame: $('btn-new'),
   pipH: $('pip-human'), pipA: $('pip-ai'), pipDiff: $('pip-diff'), moves: $('moves'),
   scoreH: $('score-human'), scoreA: $('score-ai'),
+  chipH: $('chip-human'), chipA: $('chip-ai'), nameH: $('name-human'), nameA: $('name-ai'),
+  viewButtons: document.querySelectorAll('[data-view]'),
 };
 function setStatus(t) { els.status.textContent = t; }
 
@@ -95,19 +100,26 @@ const G = {
   trayX: 846, trayW: 76,
 };
 const PT_LEN = 5 * G.D;
+const VB_W = 932;
 
-// 백 기준 포인트 p(1..24)의 중심 x와 위/아래.
+// 홈을 왼쪽에 두면 판 전체를 좌우로 뒤집는다. X: 중심 좌표, RX: 왼쪽 끝 좌표 + 폭.
+const X = (x) => (S.view.home === 'left' ? VB_W - x : x);
+const RX = (x, w) => (S.view.home === 'left' ? VB_W - x - w : x);
+// 진영의 화면 색: 'w' | 'b'.
+const tone = (side) => ((side === HUMAN) === (S.view.color === 'white') ? 'w' : 'b');
+
+// 사람 기준 포인트 p(1..24)의 중심 x와 위/아래.
 function pointGeom(p) {
-  if (p <= 6) return { x: G.rightX + (6 - p + 0.5) * G.PW, top: false };
-  if (p <= 12) return { x: G.leftX + (12 - p + 0.5) * G.PW, top: false };
-  if (p <= 18) return { x: G.leftX + (p - 13 + 0.5) * G.PW, top: true };
-  return { x: G.rightX + (p - 19 + 0.5) * G.PW, top: true };
+  if (p <= 6) return { x: X(G.rightX + (6 - p + 0.5) * G.PW), top: false };
+  if (p <= 12) return { x: X(G.leftX + (12 - p + 0.5) * G.PW), top: false };
+  if (p <= 18) return { x: X(G.leftX + (p - 13 + 0.5) * G.PW), top: true };
+  return { x: X(G.rightX + (p - 19 + 0.5) * G.PW), top: true };
 }
 function slotY(top, i) {
   return top ? G.top + G.R + 1 + i * G.D : G.bottom - G.R - 1 - i * G.D;
 }
 function barSlotY(side, i) {
-  // 백은 바 아래쪽, 흑은 위쪽에 쌓는다.
+  // 사람 말은 바 아래쪽, AI 말은 위쪽에 쌓는다.
   return side === HUMAN ? G.mid + 34 + i * G.D : G.mid - 34 - i * G.D;
 }
 
@@ -116,9 +128,9 @@ function countsAt(board, p) {
 }
 
 function checker(x, y, side, label) {
-  const cls = side === HUMAN ? 'ck-w' : 'ck-b';
-  let s = `<circle class="${cls}" cx="${x}" cy="${y}" r="${G.R}"/>`;
-  if (label) s += `<text class="${side === HUMAN ? 'ck-n-w' : 'ck-n-b'}" x="${x}" y="${y}">${label}</text>`;
+  const t = tone(side);
+  let s = `<circle class="ck-${t}" cx="${x}" cy="${y}" r="${G.R}"/>`;
+  if (label) s += `<text class="ck-n-${t}" x="${x}" y="${y}">${label}</text>`;
   return s;
 }
 
@@ -130,10 +142,11 @@ function dieSvg(x, y, v, side, used) {
     4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]],
     6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]],
   }[v];
-  const cls = side === HUMAN ? 'die' : 'die-b';
+  const t = tone(side);
+  const cls = t === 'w' ? 'die' : 'die-b';
   let s = `<g class="${used ? 'die used' : ''}" opacity="${used ? 0.35 : 1}">`;
   s += `<rect class="${cls}" x="${x - h}" y="${y - h}" width="${size}" height="${size}" rx="8"/>`;
-  for (const [dx, dy] of pos) s += `<circle class="${side === HUMAN ? 'pip' : 'pip-b'}" cx="${x + dx * 12}" cy="${y + dy * 12}" r="4.6"/>`;
+  for (const [dx, dy] of pos) s += `<circle class="${t === 'w' ? 'pip' : 'pip-b'}" cx="${x + dx * 12}" cy="${y + dy * 12}" r="4.6"/>`;
   return s + '</g>';
 }
 
@@ -158,15 +171,15 @@ function render() {
   const parts = [];
   const W = 932;
   const H = 706;
-  parts.push(`<rect class="frame" x="10" y="30" width="824" height="648" rx="10"/>`);
-  parts.push(`<rect class="felt" x="${G.leftX}" y="${G.top}" width="${6 * G.PW}" height="${G.bottom - G.top}"/>`);
-  parts.push(`<rect class="felt" x="${G.rightX}" y="${G.top}" width="${6 * G.PW}" height="${G.bottom - G.top}"/>`);
-  parts.push(`<rect class="barzone" x="${G.barX}" y="${G.top}" width="${G.barW}" height="${G.bottom - G.top}"/>`);
-  parts.push(`<rect class="frame" x="${G.trayX - 6}" y="30" width="${G.trayW + 12}" height="648" rx="10"/>`);
-  parts.push(`<rect class="tray" x="${G.trayX}" y="${G.top}" width="${G.trayW}" height="${PT_LEN}"/>`);
-  parts.push(`<rect class="tray" x="${G.trayX}" y="${G.bottom - PT_LEN}" width="${G.trayW}" height="${PT_LEN}"/>`);
+  parts.push(`<rect class="frame" x="${RX(10, 824)}" y="30" width="824" height="648" rx="10"/>`);
+  parts.push(`<rect class="felt" x="${RX(G.leftX, 6 * G.PW)}" y="${G.top}" width="${6 * G.PW}" height="${G.bottom - G.top}"/>`);
+  parts.push(`<rect class="felt" x="${RX(G.rightX, 6 * G.PW)}" y="${G.top}" width="${6 * G.PW}" height="${G.bottom - G.top}"/>`);
+  parts.push(`<rect class="barzone" x="${RX(G.barX, G.barW)}" y="${G.top}" width="${G.barW}" height="${G.bottom - G.top}"/>`);
+  parts.push(`<rect class="frame" x="${RX(G.trayX - 6, G.trayW + 12)}" y="30" width="${G.trayW + 12}" height="648" rx="10"/>`);
+  parts.push(`<rect class="tray" x="${RX(G.trayX, G.trayW)}" y="${G.top}" width="${G.trayW}" height="${PT_LEN}"/>`);
+  parts.push(`<rect class="tray" x="${RX(G.trayX, G.trayW)}" y="${G.bottom - PT_LEN}" width="${G.trayW}" height="${PT_LEN}"/>`);
 
-  // 포인트 삼각형과 번호(백 기준).
+  // 포인트 삼각형과 번호(사람 기준).
   for (let p = 1; p <= 24; p++) {
     const { x, top } = pointGeom(p);
     const half = G.PW / 2 - 1;
@@ -216,7 +229,7 @@ function render() {
   }
 
   // 바.
-  const bx = G.barX + G.barW / 2;
+  const bx = X(G.barX + G.barW / 2);
   for (const side of [HUMAN, AI]) {
     const n = b[idx(side, BAR)];
     for (let i = 0; i < Math.min(n, 3); i++) {
@@ -227,16 +240,16 @@ function render() {
     parts.push(`<circle class="${S.selected === BAR ? 'sel-ring' : 'can-ring'}" cx="${bx}" cy="${barSlotY(HUMAN, 0)}" r="${G.R + 4}"/>`);
   }
 
-  // 베어오프 트레이: 백은 아래, 흑은 위.
-  const tx = G.trayX + 6;
+  // 베어오프 트레이: 사람은 아래, AI는 위.
   const tw = G.trayW - 12;
-  for (let i = 0; i < b[idx(HUMAN, 0)]; i++) parts.push(`<rect class="off-w" x="${tx}" y="${G.bottom - 4 - (i + 1) * 17}" width="${tw}" height="14" rx="4"/>`);
-  for (let i = 0; i < b[idx(AI, 0)]; i++) parts.push(`<rect class="off-b" x="${tx}" y="${G.top + 4 + i * 17}" width="${tw}" height="14" rx="4"/>`);
+  const tx = RX(G.trayX + 6, tw);
+  for (let i = 0; i < b[idx(HUMAN, 0)]; i++) parts.push(`<rect class="off-${tone(HUMAN)}" x="${tx}" y="${G.bottom - 4 - (i + 1) * 17}" width="${tw}" height="14" rx="4"/>`);
+  for (let i = 0; i < b[idx(AI, 0)]; i++) parts.push(`<rect class="off-${tone(AI)}" x="${tx}" y="${G.top + 4 + i * 17}" width="${tw}" height="14" rx="4"/>`);
 
   // 갈 수 있는 칸.
   for (const to of dests) {
     if (to === 0) {
-      parts.push(`<rect class="dest-tray" x="${G.trayX + 2}" y="${G.bottom - PT_LEN + 2}" width="${G.trayW - 4}" height="${PT_LEN - 4}" rx="6"/>`);
+      parts.push(`<rect class="dest-tray" x="${RX(G.trayX + 2, G.trayW - 4)}" y="${G.bottom - PT_LEN + 2}" width="${G.trayW - 4}" height="${PT_LEN - 4}" rx="6"/>`);
       continue;
     }
     const { x, top } = pointGeom(to);
@@ -247,11 +260,11 @@ function render() {
 
   // 주사위: 사람은 오른쪽, AI는 왼쪽 판 가운데.
   if (S.phase === 'opening' && S.openingDice) {
-    parts.push(dieSvg(G.rightX + 3 * G.PW, G.mid, S.openingDice[0], HUMAN, false));
-    parts.push(dieSvg(G.leftX + 3 * G.PW, G.mid, S.openingDice[1], AI, false));
+    parts.push(dieSvg(X(G.rightX + 3 * G.PW), G.mid, S.openingDice[0], HUMAN, false));
+    parts.push(dieSvg(X(G.leftX + 3 * G.PW), G.mid, S.openingDice[1], AI, false));
   } else if (S.dice) {
     const flags = usedDiceFlags();
-    const cx = S.turn === HUMAN ? G.rightX + 3 * G.PW : G.leftX + 3 * G.PW;
+    const cx = X(S.turn === HUMAN ? G.rightX + 3 * G.PW : G.leftX + 3 * G.PW);
     const gap = 54;
     const x0 = cx - ((flags.length - 1) * gap) / 2;
     flags.forEach((f, i) => parts.push(dieSvg(x0 + i * gap, G.mid, f.d, S.turn, f.used && S.turn === HUMAN)));
@@ -263,8 +276,8 @@ function render() {
     const y = top ? G.top : G.mid;
     parts.push(`<rect class="hit" data-point="${p}" x="${x - G.PW / 2}" y="${y}" width="${G.PW}" height="${G.mid - G.top}"/>`);
   }
-  parts.push(`<rect class="hit" data-point="${BAR}" x="${G.barX}" y="${G.top}" width="${G.barW}" height="${G.bottom - G.top}"/>`);
-  parts.push(`<rect class="hit" data-point="0" x="${G.trayX - 6}" y="${G.mid}" width="${G.trayW + 12}" height="${G.bottom - G.mid + 12}"/>`);
+  parts.push(`<rect class="hit" data-point="${BAR}" x="${RX(G.barX, G.barW)}" y="${G.top}" width="${G.barW}" height="${G.bottom - G.top}"/>`);
+  parts.push(`<rect class="hit" data-point="0" x="${RX(G.trayX - 6, G.trayW + 12)}" y="${G.mid}" width="${G.trayW + 12}" height="${G.bottom - G.mid + 12}"/>`);
 
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   svg.innerHTML = parts.join('');
@@ -278,12 +291,21 @@ function renderPanel() {
   els.pipDiff.textContent = d === 0 ? '핍 카운트가 같아.' : d > 0 ? `내가 ${d}핍 앞서.` : `AI가 ${-d}핍 앞서.`;
   els.scoreH.textContent = S.score.human;
   els.scoreA.textContent = S.score.ai;
+  const colorName = (side) => (tone(side) === 'w' ? '백' : '흑');
+  els.chipH.className = `chip ${tone(HUMAN) === 'w' ? 'white' : 'black'}`;
+  els.chipA.className = `chip ${tone(AI) === 'w' ? 'white' : 'black'}`;
+  els.nameH.textContent = `나 (${colorName(HUMAN)})`;
+  els.nameA.textContent = `AI (${colorName(AI)})`;
+  for (const btn of els.viewButtons) {
+    const [key, value] = btn.dataset.view.split(':');
+    btn.setAttribute('aria-pressed', String(S.view[key] === value));
+  }
 
   els.roll.disabled = S.busy || !(S.phase === 'opening' || S.phase === 'roll');
   els.done.disabled = S.busy || !(S.phase === 'move' && S.ts && S.ts.done);
   els.undo.disabled = S.busy || !canUndo();
 
-  // 기보: 한 줄에 (백, 흑) 한 쌍.
+  // 기보: 한 줄에 (사람, AI) 한 쌍.
   const rows = [];
   let row = null;
   for (const h of S.history) {
@@ -481,6 +503,15 @@ const act = {
   point: guarded(onPoint), roll: guarded(onRoll), done: guarded(onDone),
   undo: guarded(onUndo), newGame: guarded(newGame),
 };
+// 화면 설정은 진행 중에도 바로 바꿀 수 있다(판 상태와 무관).
+for (const btn of els.viewButtons) {
+  btn.addEventListener('click', () => {
+    const [key, value] = btn.dataset.view.split(':');
+    S.view[key] = value;
+    storage.set('palamedes.view', S.view);
+    render();
+  });
+}
 svg.addEventListener('click', (e) => {
   const t = e.target.closest('[data-point]');
   if (t) act.point(Number(t.dataset.point));

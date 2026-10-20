@@ -33,13 +33,26 @@
       </div>
 
       <dl class="pips">
-        <div><dt><span class="chip white"></span>나 (백)</dt><dd id="pip-human">167</dd></div>
-        <div><dt><span class="chip black"></span>AI (흑)</dt><dd id="pip-ai">167</dd></div>
+        <div><dt><span id="chip-human" class="chip white"></span><span id="name-human">나 (백)</span></dt><dd id="pip-human">167</dd></div>
+        <div><dt><span id="chip-ai" class="chip black"></span><span id="name-ai">AI (흑)</span></dt><dd id="pip-ai">167</dd></div>
       </dl>
       <p id="pip-diff" class="hint"></p>
 
       <h2>기보</h2>
       <ol id="moves" class="moves"></ol>
+
+      <div class="view-settings" aria-label="보기 설정">
+        <div class="seg" role="group" aria-label="내 말 색">
+          <span class="seg-label">내 말</span>
+          <button type="button" class="seg-btn" data-view="color:white">백</button>
+          <button type="button" class="seg-btn" data-view="color:black">흑</button>
+        </div>
+        <div class="seg" role="group" aria-label="내 홈 위치">
+          <span class="seg-label">내 홈</span>
+          <button type="button" class="seg-btn" data-view="home:right">오른쪽</button>
+          <button type="button" class="seg-btn" data-view="home:left">왼쪽</button>
+        </div>
+      </div>
 
       <p class="hint foot">상대는 합법수 중 하나를 무작위로 고르는 AI야. 말을 누르면 갈 수 있는 칸이 표시돼.</p>
     </aside>

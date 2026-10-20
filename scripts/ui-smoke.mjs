@@ -65,6 +65,9 @@ for (let g = 0; g < games; g++) {
     await page.locator('#btn-new').click();
     await page.waitForFunction(() => window.__palamedes.state.phase === 'opening');
   }
+  // 판마다 화면 설정(말 색, 홈 위치)을 바꿔 가며 둔다. 뒤집힌 판에서도 터치 영역이 맞는지 확인.
+  await page.locator(`[data-view="color:${g % 2 ? 'black' : 'white'}"]`).click();
+  await page.locator(`[data-view="home:${g % 4 >= 2 ? 'left' : 'right'}"]`).click();
   for (let guard = 0; guard < 3000; guard++) {
     await waitIdle();
     const s = await state();
@@ -118,6 +121,12 @@ if (shotDir) {
     if (s.phase === 'move' && s.options.length && s.selected === null) await tap(s.options[0][0]);
     await page.screenshot({ path: path.join(shotDir, `${name}.png`), fullPage: true });
   }
+  await page.locator('[data-view="color:black"]').click();
+  await page.locator('[data-view="home:left"]').click();
+  await page.setViewportSize({ width: 1180, height: 820 });
+  await page.screenshot({ path: path.join(shotDir, 'tablet-landscape-black-left.png'), fullPage: true });
+  await page.locator('[data-view="color:white"]').click();
+  await page.locator('[data-view="home:right"]').click();
 }
 
 await browser.close();
