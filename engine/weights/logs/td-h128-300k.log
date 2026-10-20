@@ -1,0 +1,16 @@
+config: TrainConfig { hidden: 128, games: 300000, lambda: 0.7, lr_start: 0.02, lr_end: 0.002, explore: 0.0, threads: 4, games_per_thread: 4, seed: 1 }, eval_every=20000, eval_pairs=400, out=runA.bin, init=None
+games   20000      11s  lr 0.0188  loss 0.2424  vs hand: ppg -0.203 ± 0.048, wins 43.4%
+games   40000      23s  lr 0.0176  loss 0.2183  vs hand: ppg +0.021 ± 0.049, wins 52.1%
+games   60000      35s  lr 0.0164  loss 0.2070  vs hand: ppg +0.146 ± 0.047, wins 54.6%
+games   80000      47s  lr 0.0152  loss 0.2001  vs hand: ppg +0.209 ± 0.048, wins 57.0%
+games  100000      58s  lr 0.0140  loss 0.1923  vs hand: ppg +0.154 ± 0.048, wins 54.5%
+games  120000      70s  lr 0.0128  loss 0.1897  vs hand: ppg +0.217 ± 0.048, wins 57.6%
+games  140000      81s  lr 0.0116  loss 0.1925  vs hand: ppg +0.216 ± 0.043, wins 59.0%
+games  160000      92s  lr 0.0104  loss 0.1905  vs hand: ppg +0.242 ± 0.048, wins 58.2%
+games  180000     103s  lr 0.0092  loss 0.1905  vs hand: ppg +0.225 ± 0.046, wins 58.9%
+games  200000     113s  lr 0.0080  loss 0.1923  vs hand: ppg +0.237 ± 0.046, wins 58.2%
+games  220000     124s  lr 0.0068  loss 0.1927  vs hand: ppg +0.296 ± 0.046, wins 59.6%
+games  240000     135s  lr 0.0056  loss 0.1941  vs hand: ppg +0.294 ± 0.045, wins 59.2%
+games  260000     146s  lr 0.0044  loss 0.1945  vs hand: ppg +0.224 ± 0.046, wins 58.6%
+games  280000     157s  lr 0.0032  loss 0.1941  vs hand: ppg +0.263 ± 0.046, wins 59.0%
+games  300000     168s  lr 0.0020  loss 0.1981  vs hand: ppg +0.345 ± 0.044, wins 62.0%

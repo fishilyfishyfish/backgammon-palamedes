@@ -33,7 +33,7 @@
 1. 규칙, 합법수 생성, 특징값 계산, 테스트 — **완료**
 2. 웹 UI(사람 vs 랜덤 AI), Pages 배포 — **완료**
 3. 손으로 짠 평가함수 + 1수 탐색. 이후 엔진의 기준선. — **완료**
-4. TD(λ) 자기대국 신경망. 출력은 승리·개먼·백개먼 확률. — **진행 중** 같은 주사위 시드로 자리를 바꾸는
+4. TD(λ) 자기대국 신경망. 출력은 승리·개먼·백개먼 확률. — **완료** 같은 주사위 시드로 자리를 바꾸는
    미러 대국 수천 판으로 기준선 대비 강도 측정.
 5. 설명 층과 분석 페이지(기보 복기, 수마다 실수 등급과 설명),
    친절한 대국 모드(힌트, 큰 실수 전 경고와 이유, 무르기).
@@ -53,12 +53,14 @@ cd engine && cargo fmt --check && cargo clippy --all-targets -- -D warnings && c
 # 성능 측정
 cd engine && cargo run --release --example bench
 
-# 강도 측정(미러 대국): 플레이어 random | hand
-cd engine && cargo run --release --example match -- hand random 500
+# 강도 측정(미러 대국, 4스레드): 플레이어 random | hand | nn(포함된 가중치) | nn:<경로>
+cd engine && cargo run --release --example match -- nn hand 2500
+# TD(λ) 자기대국 학습 (key=value: games, hidden, lambda, lr, lr_end, threads, eval_every, eval_pairs, out, init)
+cd engine && cargo run --release --example train -- games=2000000 lr=0.02 lr_end=0.001 out=weights/td-new.bin
 # 가중치 하나를 바꾼 손 평가 vs 기본값 (TUNE_SEED로 다른 주사위)
 cd engine && cargo run --release --example tune -- 600 hit_scale=0.8
-# 시작 국면 15가지 주사위의 선택과 상위 후보
-cd engine && cargo run --release --example openings
+# 시작 국면 15가지 주사위의 선택과 상위 후보 (hand | nn | nn:<경로>)
+cd engine && cargo run --release --example openings -- nn
 
 # WASM 빌드 → web/pkg (gitignore 대상, CI에서 빌드)
 rustup target add wasm32-unknown-unknown
@@ -86,10 +88,13 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `engine/src/rng.rs` | 시드 고정 SplitMix64 (자기대국·미러 대국용) |
 | `engine/src/eval.rs` | `OutcomeProbs`(결과 확률·에퀴티), `Evaluator` 트레이트, 손 평가 `HandEval`/`HandWeights`, 레이스 공식 |
 | `engine/src/search.rs` | 1수 탐색 `rank_moves`/`best_move`, 웹용 `MoveSummary` |
-| `engine/src/play.rs` | `Player`(랜덤, `OnePly`), `play_game`, 미러 대국 `mirror_match`와 통계 |
-| `engine/examples/` | `bench`(성능), `match`(강도), `tune`(가중치 비교), `openings`(시작 수 확인) |
+| `engine/src/play.rs` | `Player`(랜덤, `OnePly`), `play_game`, 미러 대국 `mirror_match`/`parallel_mirror_match`와 통계 |
+| `engine/src/nn.rs` | 신경망 `Net`(입력 인코딩, 희소 순전파·역전파, PNN1 저장 형식), `NnEval`(포함된 가중치) |
+| `engine/src/train.rs` | TD(λ) 자기대국: `self_play_game`(λ-리턴 표본), `train_round`(병렬 라운드) |
+| `engine/weights/` | `td.bin`(WASM·엔진에 포함되는 가중치), `logs/`(학습 기록) |
+| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인) |
 | `engine/src/wasm.rs` | 웹 바인딩. 상태 없음: 52칸 판 배열 + JSON |
-| `engine/tests/` | 규칙(`rules.rs`), 특징값(`features.rs`), 무작위 자기대국 불변식(`selfplay.rs`), 평가·탐색(`eval.rs`) |
+| `engine/tests/` | 규칙(`rules.rs`), 특징값(`features.rs`), 무작위 자기대국 불변식(`selfplay.rs`), 평가·탐색(`eval.rs`), 신경망·학습(`nn.rs`) |
 | `web/app.js` | 대국 상태 기계, SVG 판 렌더링, 입력 처리 |
 | `web/engine-worker.js` | WASM을 올린 module worker, `{id, fn, args}` RPC |
 | `scripts/build-wasm.sh`, `scripts/ui-smoke.mjs` | WASM 빌드, UI 자동 점검 |
@@ -177,13 +182,41 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 - 핍만 보는 1수 탐색은 랜덤에게도 진다(13.8% 승). 접촉 국면에서 핍만으로는 수를 구분할 수 없어서라 비교 기준에서 뺐다.
 - 웹 상대 기본값은 기준선(`rank_moves_json`의 1위 수). 설정에서 랜덤으로 바꿀 수 있다.
 
+### 신경망 (4단계)
+- 구조: 입력 196 → 은닉 128(시그모이드) → 출력 5(시그모이드) = 굴릴 쪽 기준 [승, 개먼승, 백개먼승, 개먼패, 백개먼패]
+  무조건부 확률. 출력은 `clamped()`로 포함 관계를 맞춘다. 종국 국면은 신경망을 거치지 않고 확정값.
+- 입력: Tesauro 방식. 굴릴 쪽, 상대 순서로 각 진영 자기 기준 좌표의 포인트마다 [n≥1, n≥2, n≥3, (n−3)/2], 바 n/2, 오프 n/15.
+  굴릴 쪽 기준이라 "누구 차례" 입력이 필요 없고 백·흑 대칭이 구조적으로 보장된다(테스트로 확인).
+  손으로 만든 특징(샷 수 등)은 넣지 않았다: 순수 TD 기준을 먼저 세우고, 넣을지는 나중에 미러 대국으로 판단.
+- 입력이 대부분 0이라 순전파·역전파를 희소 목록으로 한다. 국면당 평가가 매우 싸서 1수 결정이 WASM에서 0.13 ms.
+- 학습(전방 관점 TD(λ), 오프라인 λ-리턴): 자기대국 중 각 차례의 입력 x_t와 고른 수의 1수 평가 e_t(= 다음 국면 가치를
+  이번 쪽에서 본 값)를 모은다. 판이 끝나면 G_t = (1−λ)·e_t + λ·inv(G_{t+1}), 마지막은 실제 결과. (x_t, G_t)로 교차 엔트로피 SGD.
+  - 이유: 출력 5개가 차례마다 관점이 뒤집히는(승↔패, 개먼승↔개먼패) 구조라 적격 흔적(eligibility trace)보다
+    λ-리턴을 뒤에서부터 계산하는 쪽이 단순하고 틀리기 어렵다. 판 단위로 끝나서 병렬화도 쉽다.
+  - 병렬: 라운드마다 4스레드가 같은 가중치로 4판씩(16판) 두고, 모은 표본으로 순서대로 SGD. 라운드 안에서는 가중치가 고정이라
+    순수 온라인 TD와 약간 다르다.
+  - 탐험은 없음(주사위가 충분히 다양함). λ = 0.7, 학습률 0.02 → 0.001 선형 감소, 초기 가중치 ±1/√fan_in 균등.
+- 실험(평가는 모두 1수 탐색, 미러 대국, 기준선 = `OnePly<HandEval>`):
+
+  | 모델 | 학습 | 기준선 대비 (5000판) | 비고 |
+  |---|---|---|---|
+  | 은닉 128, 30만 판 | 168초 | +0.345 ± 0.044 (800판) | 첫 실행 |
+  | **은닉 128, 200만 판** | 833초 | **+0.390 ± 0.018**, 승률 64.2% | **채택** (`weights/td.bin`) |
+  | 은닉 256, 200만 판 | 1405초 | +0.388 ± 0.018 | 128 대비 +0.016 ± 0.017로 차이 없음 |
+
+  200만 판(128) vs 30만 판(128): +0.109 ± 0.018. 학습 중 측정(1000판)은 60만 판 이후 +0.27~0.41에서 오르내려 거의 수렴.
+  256은 강해지지 않고 크기·속도만 두 배라 128을 채택. 학습 기록은 `weights/logs/`.
+- 채택 모델의 시작 수 15개는 모두 정석 후보(54 24/20 13/8, 43 24/21 13/9, 32 24/21 13/11, 21 24/23 13/11 등).
+  시작 국면 에퀴티 +0.052(굴릴 쪽), 승 52.0%, 개먼승 12.9%.
+- 웹 상대 기본값은 신경망. 기준선·랜덤은 설정에서 선택. 엔진 API는 `rank_moves_json(..., engine)`(0 = 기준선, 1 = 신경망).
+
 ### 다음 단계 참고
 - 실수 등급 임계값(GNU 백개먼 기본값, 에퀴티 손실 기준): 의심스러움(doubtful) 0.04, 나쁨(bad) 0.08,
   매우 나쁨(very bad) 0.16. 5단계에서 실제 gnubg 소스로 다시 확인하고 적용.
-- 4단계 강도 측정 기준선: `OnePly<HandEval>` (`examples/match.rs`의 `hand`). 기준선 vs 랜덤 = +2.62 ppg.
+- 강도 측정 기준선: `OnePly<HandEval>` (`examples/match.rs`의 `hand`). 기준선 vs 랜덤 = +2.62 ppg. 신경망 vs 랜덤 = +2.64 ppg.
 - 시작 수 중 기준선이 흔히 두는 수와 다르게 두는 것: 62(24/16), 43·52(13/6), 41·32(13/8), 21(13/10).
   31·42·53·61·65는 포인트 만들기/달리기로 정석과 같고, 63(24/15)·64(8/2 6/2)는 정석 후보 중 하나.
-  손 평가의 한계로 두고 4단계 신경망과 비교할 때 참고.
+  신경망(4단계)은 이 수들을 모두 정석대로 둔다.
 
 ## 성능 기록
 
@@ -203,13 +236,19 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | 2026-10-20 | WASM 크기 (3단계) | 208 KB |
 | 2026-10-20 | 테스트 `cargo test --release` (3단계) | 31개 통과, 약 6초 |
 | 2026-10-20 | 4단계 첫 학습(은닉 128, λ 0.7, 30만 판, 4스레드) | 168초. 기준선 대비 +0.345 ± 0.044 ppg (800판) |
-| 2026-10-20 | `rank_moves_json` (WASM, 신경망) | 0.12 ms/결정 |
+| 2026-10-20 | `rank_moves_json` (WASM, 신경망) | 0.12~0.13 ms/결정 |
+| 2026-10-20 | 학습 속도(은닉 128, 4스레드) | 약 2,400판/초 (평가 대국 포함 200만 판 833초) |
+| 2026-10-20 | 강도: 신경망(채택) vs 기준선 | 5000판, 64.2% 승, +0.390 ± 0.018 ppg |
+| 2026-10-20 | 강도: 신경망 vs 랜덤 | 1000판, 99.7% 승, +2.637 ± 0.019 ppg |
+| 2026-10-20 | WASM 크기 (4단계, 가중치 포함) | 327 KB |
+| 2026-10-20 | 테스트 `cargo test --release` (4단계) | 37개 통과, 약 6초 |
 
 ## 현재 상태와 남은 문제
-- 1·2·3단계 완료. 웹 상대는 기준선(손 평가 + 1수 탐색), 설정에서 랜덤 선택 가능.
+- 1~4단계 완료. 웹 상대는 신경망(1수 탐색) 기본, 기준선·랜덤 선택 가능.
 - 기보 표기에서 같은 말이 여러 번 움직인 경우의 묶음 표기는 단순 규칙(이어지는 걸음은 한 줄로)이다.
   표기가 여러 가지로 가능한 드문 경우(같은 칸에 둘이 도착 후 하나만 다시 이동) gnubg와 다르게 보일 수 있다.
 - UI 자동 점검(`scripts/ui-smoke.mjs`)은 CI에 넣지 않았다(로컬 Playwright 필요). 판마다 말 색·홈 위치·상대를 바꿔 가며 둔다.
 - 접근성: 판 SVG는 키보드로 말을 고를 수 없다(R/Enter/U 단축키만 있음). 5단계 전에 보완.
-- 기준선은 1수 탐색이라 상대 응수를 보지 않는다. 2수 탐색은 비용(약 21×20배) 대비 효과를 4단계에서 신경망과 같이 판단.
+- 탐색은 1수뿐이다. 신경망이 싸서(0.13 ms/결정) 2수 탐색(약 400배, WASM 약 50 ms)도 가능해 보인다. 효과는 미러 대국으로 따로 확인할 것.
 - 손 평가의 접촉 국면 개먼 비율은 어림값이다. 시작 국면 개먼 비율(이길 때 약 29%)은 실제(약 27%)와 비슷하지만 국면별로 검증하지 않았다.
+- 신경망 학습은 시드 고정이지만 스레드 라운드 구성(threads, gpt)에 따라 결과가 달라진다. 재현하려면 같은 설정으로 돌릴 것.
