@@ -162,3 +162,52 @@ fn embedded_weights_play_well() {
     let st = mirror_match(&mut a, &mut r, pairs, 5);
     assert!(st.win_rate() > 0.9, "{}", st.win_rate());
 }
+
+#[test]
+fn extended_encoding() {
+    use palamedes::nn::{INPUTS_EXT, encode_ext};
+    for (b, s) in random_positions(300, 8) {
+        let x = encode_ext(&b, s);
+        assert_eq!(x, encode_ext(&b.swapped(), s.opp()));
+        assert!(
+            x.iter()
+                .all(|&(i, v)| (i as usize) < INPUTS_EXT && v > 0.0 && v.is_finite())
+        );
+        assert_eq!(&x[..encode(&b, s).len()], &encode(&b, s)[..]);
+    }
+    let get = |x: &[(u16, f32)], k: usize| {
+        x.iter()
+            .find(|(i, _)| *i as usize == INPUTS + k)
+            .map_or(0.0, |e| e.1)
+    };
+    // 시작 국면: 핍 167, 24의 말은 12·17·19의 상대 포인트를 못 지나감(탈출 0), 블롯 없음, 최장 연속 1칸, 홈 포인트 1개.
+    let x = encode_ext(&Board::start(), Side::White);
+    assert!((get(&x, 0) - 1.67).abs() < 1e-6);
+    assert_eq!(get(&x, 1), 0.0);
+    assert_eq!(get(&x, 2), 0.0);
+    assert_eq!(get(&x, 3), 0.0);
+    assert!((get(&x, 4) - 1.0 / 6.0).abs() < 1e-6);
+    assert!((get(&x, 5) - 1.0 / 6.0).abs() < 1e-6);
+    // 블롯 하나(백 20)와 6칸 뒤 상대 말(백 기준 14): 6을 만드는 굴림 17개. 백 말이 앞을 막는 상대 포인트가 없으면 탈출 36.
+    let mut b = Board::empty();
+    b.pos[0][20] = 1;
+    b.pos[0][0] = 14;
+    b.pos[1][25 - 14] = 1;
+    b.pos[1][0] = 14;
+    let x = encode_ext(&b, Side::White);
+    assert!((get(&x, 2) - 17.0 / 36.0).abs() < 1e-6);
+    assert_eq!(get(&x, 1), 1.0);
+}
+
+#[test]
+fn extended_net_roundtrip() {
+    use palamedes::nn::INPUTS_EXT;
+    let net = Net::with_inputs(INPUTS_EXT, 8, 3);
+    let mut buf = Vec::new();
+    net.write_to(&mut buf).unwrap();
+    let back = Net::from_bytes(&buf).unwrap();
+    assert_eq!(back, net);
+    let ev = NnEval::new(back);
+    let p = ev.evaluate(&Board::start(), Side::White);
+    assert!(p.win > 0.0 && p.win < 1.0);
+}

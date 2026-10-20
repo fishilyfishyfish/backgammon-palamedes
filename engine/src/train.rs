@@ -8,7 +8,7 @@
 use crate::board::{Board, Side};
 use crate::eval::{Evaluator, OutcomeProbs};
 use crate::movegen::legal_moves_with_boards;
-use crate::nn::{NnEval, OUTPUTS, Sparse, encode, from_probs};
+use crate::nn::{NnEval, OUTPUTS, Sparse, from_probs};
 use crate::rng::Rng;
 use crate::search::evaluate_after;
 
@@ -32,7 +32,7 @@ pub fn self_play_game(eval: &NnEval, seed: u64, lambda: f32, explore: f32) -> Ve
     let mut xs: Vec<Sparse> = Vec::with_capacity(80);
     let mut es: Vec<OutcomeProbs> = Vec::with_capacity(80);
     loop {
-        xs.push(encode(&b, side));
+        xs.push(eval.net.encode(&b, side));
         let mut cands: Vec<(Board, OutcomeProbs, f32)> = legal_moves_with_boards(&b, side, d1, d2)
             .into_iter()
             .map(|(_, nb)| {
@@ -86,6 +86,8 @@ fn mix(a: &OutcomeProbs, b: &OutcomeProbs, lambda: f32) -> OutcomeProbs {
 
 #[derive(Clone, Debug)]
 pub struct TrainConfig {
+    /// 입력 수(`nn::INPUTS` 또는 손 특징을 더한 `nn::INPUTS_EXT`). 새로 만들 때만 쓴다.
+    pub inputs: usize,
     pub hidden: usize,
     pub games: u64,
     pub lambda: f32,
@@ -102,6 +104,7 @@ pub struct TrainConfig {
 impl Default for TrainConfig {
     fn default() -> Self {
         TrainConfig {
+            inputs: crate::nn::INPUTS,
             hidden: 128,
             games: 100_000,
             lambda: 0.7,

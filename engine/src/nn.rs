@@ -3,6 +3,11 @@
 //!
 //! 입력(196개, Tesauro 방식): 굴릴 쪽, 상대 순서로 각 진영 자기 기준 좌표에서
 //! 포인트 1..=24마다 4칸 [n≥1, n≥2, n≥3, (n−3)/2], 바 n/2, 베어오프 n/15.
+//!
+//! 확장 입력(209개 = 196 + 13): 위에 손 특징을 더한다. 진영마다(굴릴 쪽, 상대) 6개
+//! [핍/100, 가장 뒤 말의 탈출 굴림/36, 블롯이 맞을 수 있는 굴림/36(막힌 칸 무시), 프라임 뒤에 갇힌 말/5,
+//! 가장 긴 연속 포인트/6, 홈보드 포인트/6], 그리고 레이스면 1. 수 생성 없이 계산한다(학습 속도 때문).
+//! 가중치 파일의 입력 수로 어느 인코딩인지 정한다(`Net::encode`).
 
 // 행렬 인덱스를 직접 쓰는 편이 순전파·역전파 식과 대응이 잘 보인다.
 #![allow(clippy::needless_range_loop)]
@@ -13,6 +18,9 @@ use crate::board::{BAR, Board, Side};
 use crate::eval::{Evaluator, OutcomeProbs};
 
 pub const INPUTS: usize = 196;
+/// 손 특징을 더한 입력 수.
+pub const INPUTS_EXT: usize = INPUTS + 2 * EXT_PER_SIDE + 1;
+const EXT_PER_SIDE: usize = 6;
 pub const OUTPUTS: usize = 5;
 const PER_SIDE: usize = 98;
 const MAGIC: &[u8; 4] = b"PNN1";
@@ -52,6 +60,147 @@ pub fn encode(b: &Board, on_roll: Side) -> Sparse {
     x
 }
 
+/// 확장 입력: `encode` + 손 특징.
+pub fn encode_ext(b: &Board, on_roll: Side) -> Sparse {
+    let mut x = encode(b, on_roll);
+    let sides = [on_roll, on_roll.opp()];
+    for (k, s) in sides.into_iter().enumerate() {
+        let me = &b.pos[s.idx()];
+        let op = &b.pos[s.opp().idx()];
+        let (prime, _) = longest_prime(me);
+        let (op_prime, op_lo) = longest_prime(op);
+        let trapped = if op_prime >= 4 {
+            // 상대 포인트 lo..는 내 기준 25 − lo 이하. 그보다 위(와 바)에 있는 내 말.
+            me[(25 - op_lo as usize + 1)..=BAR]
+                .iter()
+                .map(|&n| n as u32)
+                .sum::<u32>()
+        } else {
+            0
+        };
+        let home = (1..=6).filter(|&p| me[p] >= 2).count();
+        let vals = [
+            b.pips(s) as f32 / 100.0,
+            escapes(me, op) as f32 / 36.0,
+            exposure(me, op) as f32 / 36.0,
+            trapped as f32 / 5.0,
+            prime as f32 / 6.0,
+            home as f32 / 6.0,
+        ];
+        let base = INPUTS + k * EXT_PER_SIDE;
+        for (j, v) in vals.into_iter().enumerate() {
+            if v != 0.0 {
+                x.push(((base + j) as u16, v));
+            }
+        }
+    }
+    if crate::eval::is_race(b) {
+        x.push(((INPUTS_EXT - 1) as u16, 1.0));
+    }
+    x
+}
+
+/// 가장 긴 연속 포인트(2개 이상)의 길이와 그 낮은 쪽 끝(자기 기준).
+fn longest_prime(me: &[u8; 26]) -> (u8, u8) {
+    let (mut best, mut lo, mut run) = (0u8, 0u8, 0u8);
+    for p in 1..=24 {
+        if me[p] >= 2 {
+            run += 1;
+            if run > best {
+                best = run;
+                lo = (p as u8) + 1 - run;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    (best, lo)
+}
+
+/// 21가지 굴림(36 가중)마다 거리 집합: 한 말이 한 번에 갈 수 있는 거리들(중간 칸 막힘 무시).
+fn roll_distances(d1: u8, d2: u8) -> ([u8; 4], usize) {
+    if d1 == d2 {
+        ([d1, 2 * d1, 3 * d1, 4 * d1], 4)
+    } else {
+        ([d1, d2, d1 + d2, 0], 3)
+    }
+}
+
+/// 가장 뒤(바 포함) 내 말이 앞쪽 12칸 안의 상대 포인트를 모두 지나갈 수 있는 굴림 수(36 중).
+/// 한 말만 움직이고 중간·도착 칸이 상대 포인트면 안 된다. 앞에 막는 포인트가 없으면 36.
+fn escapes(me: &[u8; 26], op: &[u8; 26]) -> u32 {
+    let Some(back) = (1..=BAR).rev().find(|&p| me[p] > 0) else {
+        return 36;
+    };
+    // 내 포인트 q에 상대 포인트가 있으면 막힘. 상대 기준 25 − q.
+    let blocked = |q: usize| (1..=24).contains(&q) && op[25 - q] >= 2;
+    let lowest = (back.saturating_sub(12).max(1)..back).find(|&q| blocked(q));
+    let Some(lowest) = lowest else {
+        return 36;
+    };
+    // 한 말이 순서대로 d, e(더블이면 d 네 번)를 써서 lowest보다 아래로 갈 수 있는가.
+    let run = |steps: &[u8]| {
+        let mut at = back as i32;
+        for &d in steps {
+            at -= d as i32;
+            if at < lowest as i32 {
+                return true;
+            }
+            if blocked(at as usize) {
+                return false;
+            }
+        }
+        false
+    };
+    let mut n = 0;
+    for d1 in 1..=6u8 {
+        if run(&[d1; 4]) {
+            n += 1;
+        }
+        for d2 in d1 + 1..=6u8 {
+            if run(&[d1, d2]) || run(&[d2, d1]) {
+                n += 2;
+            }
+        }
+    }
+    n
+}
+
+/// 내 블롯 중 하나라도 상대가 맞힐 수 있는 굴림 수(36 중). 상대 말에서 블롯까지 거리만 보고 막힌 칸은 무시.
+fn exposure(me: &[u8; 26], op: &[u8; 26]) -> u32 {
+    // 상대 말은 내 기준으로 낮은 번호에서 높은 번호로 온다. 상대 바는 내 기준 0.
+    let mut dist = [false; 25];
+    let mut any = false;
+    for p in 1..=24 {
+        if me[p] != 1 {
+            continue;
+        }
+        for q in 0..p {
+            let has = if q == 0 { op[BAR] > 0 } else { op[25 - q] > 0 };
+            if has && p - q <= 24 {
+                dist[p - q] = true;
+                any = true;
+            }
+        }
+    }
+    if !any {
+        return 0;
+    }
+    let mut n = 0;
+    for d1 in 1..=6u8 {
+        for d2 in d1..=6u8 {
+            let (ds, len) = roll_distances(d1, d2);
+            if ds[..len]
+                .iter()
+                .any(|&d| (d as usize) < 25 && dist[d as usize])
+            {
+                n += if d1 == d2 { 1 } else { 2 };
+            }
+        }
+    }
+    n
+}
+
 #[inline]
 fn sigmoid(z: f32) -> f32 {
     1.0 / (1.0 + (-z).exp())
@@ -59,6 +208,8 @@ fn sigmoid(z: f32) -> f32 {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Net {
+    /// 입력 수: `INPUTS`(기본) 또는 `INPUTS_EXT`(손 특징 포함).
+    pub inputs: usize,
     pub hidden: usize,
     /// [입력][은닉]
     pub w1: Vec<f32>,
@@ -69,19 +220,34 @@ pub struct Net {
 }
 
 impl Net {
-    /// 작은 균등 난수로 초기화.
+    /// 작은 균등 난수로 초기화(기본 입력).
     pub fn new(hidden: usize, seed: u64) -> Net {
+        Net::with_inputs(INPUTS, hidden, seed)
+    }
+
+    pub fn with_inputs(inputs: usize, hidden: usize, seed: u64) -> Net {
+        assert!(inputs == INPUTS || inputs == INPUTS_EXT, "inputs");
         let mut rng = crate::rng::Rng::new(seed);
         let mut u =
             |scale: f32| ((rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0) * scale;
-        let s1 = 1.0 / (INPUTS as f32).sqrt();
+        let s1 = 1.0 / (inputs as f32).sqrt();
         let s2 = 1.0 / (hidden as f32).sqrt();
         Net {
+            inputs,
             hidden,
-            w1: (0..INPUTS * hidden).map(|_| u(s1)).collect(),
+            w1: (0..inputs * hidden).map(|_| u(s1)).collect(),
             b1: vec![0.0; hidden],
             w2: (0..hidden * OUTPUTS).map(|_| u(s2)).collect(),
             b2: [0.0; OUTPUTS],
+        }
+    }
+
+    /// 이 망의 입력 형식으로 인코딩.
+    pub fn encode(&self, b: &Board, on_roll: Side) -> Sparse {
+        if self.inputs == INPUTS_EXT {
+            encode_ext(b, on_roll)
+        } else {
+            encode(b, on_roll)
         }
     }
 
@@ -165,7 +331,7 @@ impl Net {
 
     pub fn write_to(&self, w: &mut impl Write) -> io::Result<()> {
         w.write_all(MAGIC)?;
-        for n in [INPUTS, self.hidden, OUTPUTS] {
+        for n in [self.inputs, self.hidden, OUTPUTS] {
             w.write_all(&(n as u32).to_le_bytes())?;
         }
         for v in self
@@ -193,10 +359,11 @@ impl Net {
             r.read_exact(&mut b)?;
             *d = u32::from_le_bytes(b) as usize;
         }
-        if dims[0] != INPUTS || dims[2] != OUTPUTS || dims[1] == 0 || dims[1] > 4096 {
+        let inputs_ok = dims[0] == INPUTS || dims[0] == INPUTS_EXT;
+        if !inputs_ok || dims[2] != OUTPUTS || dims[1] == 0 || dims[1] > 4096 {
             return Err(bad("dimension mismatch"));
         }
-        let hidden = dims[1];
+        let (inputs, hidden) = (dims[0], dims[1]);
         let mut read = |n: usize| -> io::Result<Vec<f32>> {
             let mut buf = vec![0u8; n * 4];
             r.read_exact(&mut buf)?;
@@ -207,13 +374,14 @@ impl Net {
                 .map(|c| f32::from_le_bytes(*c))
                 .collect())
         };
-        let w1 = read(INPUTS * hidden)?;
+        let w1 = read(inputs * hidden)?;
         let b1 = read(hidden)?;
         let w2 = read(hidden * OUTPUTS)?;
         let b2v = read(OUTPUTS)?;
         let mut b2 = [0.0; OUTPUTS];
         b2.copy_from_slice(&b2v);
         Ok(Net {
+            inputs,
             hidden,
             w1,
             b1,
@@ -273,6 +441,6 @@ impl Evaluator for NnEval {
         if let Some((w, pts)) = b.result() {
             return OutcomeProbs::terminal(w, pts, on_roll);
         }
-        to_probs(&self.net.predict(&encode(b, on_roll)))
+        to_probs(&self.net.predict(&self.net.encode(b, on_roll)))
     }
 }
