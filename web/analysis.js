@@ -437,7 +437,7 @@ window.__palamedesAnalysis = { state: A };
 (async () => {
   startBoard = await call('start_board');
   if (!A.games.length) {
-    setStatus('저장된 기보가 없어. 대국을 두면 자동으로 저장돼(최근 20판).');
+    setStatus(`저장된 기보가 없어. 대국을 두면 자동으로 저장돼(최근 ${GAME_LIMIT}판).`);
     render();
     return;
   }

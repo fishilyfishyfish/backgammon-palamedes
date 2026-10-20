@@ -66,7 +66,7 @@ export function createEngine(onError) {
 //   cube: 그 시점(수를 두기 전·큐브 동작 전)의 {value, owner: null|0|1}
 //   result: {winner, points, passed?}
 const GAMES_KEY = 'palamedes.games';
-export const GAME_LIMIT = 20;
+export const GAME_LIMIT = 50;
 
 export function loadGames() {
   const games = storage.get(GAMES_KEY, []);
