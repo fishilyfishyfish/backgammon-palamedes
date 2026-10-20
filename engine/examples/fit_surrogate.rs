@@ -123,6 +123,8 @@ const SIGNS: [i8; K] = [
     1,  // race_pip_lead
     -1, // my_hit_loss
     -1, // my_stacks
+    -1, // my_trapped
+    1,  // opp_trapped
 ];
 
 /// 부호 제약 최소제곱(활성 집합): 풀고, 제약을 가장 크게 어긴 가중치를 0으로 고정하고 다시 푼다.

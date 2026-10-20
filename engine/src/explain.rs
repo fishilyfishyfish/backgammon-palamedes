@@ -15,7 +15,7 @@ use crate::eval::is_race;
 use crate::features::{Features, SideFeatures, compute_features};
 
 /// 대리 모델 입력 개수.
-pub const K: usize = 19;
+pub const K: usize = 21;
 
 /// 대리 모델 입력 이름. 순서가 가중치 파일과 맞아야 한다.
 pub const NAMES: [&str; K] = [
@@ -38,6 +38,8 @@ pub const NAMES: [&str; K] = [
     "race_pip_lead",
     "my_hit_loss",
     "my_stacks",
+    "my_trapped",
+    "opp_trapped",
 ];
 
 /// 수를 둔 쪽(mover) 기준 대리 모델 입력. 핍 차이는 10핍 단위, 샷은 36분율.
@@ -65,7 +67,26 @@ pub fn surrogate_inputs(f: &Features, mover: Side, race: bool) -> [f32; K] {
         if race { lead } else { 0.0 },
         hit_loss(me),
         stacks(me) as f32,
+        trapped(me, op) as f32,
+        trapped(op, me) as f32,
     ]
+}
+
+/// 프라임으로 보는 최소 길이.
+pub const TRAP_PRIME: u8 = 4;
+
+/// `me`의 말 중 `op`의 가장 긴 연속 포인트(4칸 이상) 뒤에 있는 말 수(바 포함).
+/// 상대 포인트 lo..=hi는 내 기준 25 − hi..=25 − lo이고, 내 말은 내려가므로 25 − lo보다 위에 있으면 갇힌 것.
+pub fn trapped(me: &SideFeatures, op: &SideFeatures) -> u32 {
+    if op.prime_len < TRAP_PRIME {
+        return 0;
+    }
+    let top = 25 - op.prime_range.0 as usize;
+    me.on_bar as u32
+        + me.point_counts[top..]
+            .iter()
+            .map(|&n| n as u32)
+            .sum::<u32>()
 }
 
 /// 블롯이 맞았을 때 잃는 핍의 기댓값(10핍 단위): Σ (맞을 조합/36) × (25 − 포인트).
@@ -128,7 +149,7 @@ pub const HINT: Labels = Labels {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Reason {
-    /// 주제: blots, home, prime, anchor, hit, opp_blots, pips, off, stacks, bar.
+    /// 주제: blots, home, prime, anchor, hit, opp_blots, pips, off, stacks, trapped, bar.
     pub topic: &'static str,
     /// 대리 모델이 이 주제(묶인 특징들의 합)에 돌린 에퀴티 차이(better − worse).
     pub contribution: f32,
@@ -159,6 +180,8 @@ pub fn topic_of(name: &str) -> &'static str {
         "pip_lead" | "race_pip_lead" => "pips",
         "my_off" | "opp_off" => "off",
         "my_stacks" => "stacks",
+        "my_trapped" => "trapped",
+        "opp_trapped" => "prime",
         _ => "bar",
     }
 }
@@ -280,6 +303,21 @@ fn sentence(
                 "개",
             ),
         },
+        "prime" if lead == "opp_trapped" && trapped(op_w, me_w) != trapped(op_b, me_b) => {
+            let (vw, vb) = (trapped(op_w, me_w), trapped(op_b, me_b));
+            let len = |f: &SideFeatures, n: u32| {
+                if n > 0 {
+                    format!("{}칸 프라임 뒤에 {n}개", f.prime_len)
+                } else {
+                    "0개".to_string()
+                }
+            };
+            format!(
+                "내 프라임 뒤에 갇힌 상대 말: {better} {}, {worse} {}.",
+                len(me_b, vb),
+                len(me_w, vw)
+            )
+        }
         "prime" if lead == "prime_len" && me_w.prime_len != me_b.prime_len => {
             let (vw, vb) = (me_w.prime_len as u32, me_b.prime_len as u32);
             if vb > vw {
@@ -344,6 +382,12 @@ fn sentence(
             format!("핍 차이(상대 − 나): {better} {lb:+}, {worse} {lw:+}.")
         }
         "off" => cmp("뺀 말", me_w.off as u32, me_b.off as u32, "개"),
+        "trapped" => cmp(
+            "상대 프라임(4칸 이상) 뒤에 갇힌 내 말",
+            trapped(me_w, op_w),
+            trapped(me_b, op_b),
+            "개",
+        ),
         "stacks" => cmp(
             "한 포인트에 3개를 넘게 쌓인 말",
             stacks(me_w),

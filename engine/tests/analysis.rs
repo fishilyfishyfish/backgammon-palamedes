@@ -192,3 +192,20 @@ fn two_ply_ranking_and_analysis() {
     assert_eq!(h.best.notation, "13/7 8/7");
     assert!(h.top[0].ply == 2 && h.top[1].ply == 2);
 }
+
+#[test]
+fn trapped_counts_checkers_behind_prime() {
+    use palamedes::explain::trapped;
+    use palamedes::features::compute_features;
+    // 흑이 자기 4..=8 포인트(백 기준 17..=21)에 5칸 프라임. 백 24에 2개, 22에 1개는 갇히고 13의 말은 아니다.
+    let b = board(
+        &[(24, 2), (22, 1), (13, 5), (6, 5)],
+        &[(4, 2), (5, 2), (6, 2), (7, 2), (8, 2), (13, 5)],
+    );
+    let f = compute_features(&b);
+    let (w, k) = (&f.sides[0], &f.sides[1]);
+    assert_eq!(k.prime_len, 5);
+    assert_eq!(trapped(w, k), 3);
+    // 백은 프라임이 없다.
+    assert_eq!(trapped(k, w), 0);
+}
