@@ -1,6 +1,6 @@
 // 분석 화면: 저장된 기보를 수마다 엔진(신경망 1수 탐색)으로 평가하고, 실수 등급과 설명을 보여 준다.
 
-import { AI, ENGINE_NN, HUMAN, createEngine, escapeHtml, gradeClass, loadGames, loadView } from './common.js';
+import { AI, ENGINE_NN, GAME_LIMIT, HUMAN, createEngine, escapeHtml, exportText, gradeClass, loadGames, loadView, parseImport, saveGame } from './common.js';
 import { diceList, renderBoard } from './board-view.js';
 
 const $ = (id) => document.getElementById(id);
@@ -8,6 +8,7 @@ const svg = $('board');
 const els = {
   select: $('game-select'), status: $('status'), summary: $('summary'), prev: $('btn-prev'), next: $('btn-next'),
   pos: $('pos'), detail: $('detail'), moves: $('moves'), show: document.querySelectorAll('[data-show]'),
+  importBtn: $('btn-import'), exportBtn: $('btn-export'), exportAllBtn: $('btn-export-all'), file: $('file-import'),
 };
 const setStatus = (t) => { els.status.textContent = t; };
 const call = createEngine((msg) => setStatus(`엔진을 불러오지 못했어: ${msg}`));
@@ -119,6 +120,8 @@ function detailHtml(e, r) {
 
 function render() {
   for (const btn of els.show) btn.setAttribute('aria-pressed', String(btn.dataset.show === A.show));
+  els.exportBtn.disabled = !A.game;
+  els.exportAllBtn.disabled = !A.games.length;
   if (!A.game) {
     els.summary.innerHTML = '';
     els.moves.innerHTML = '';
@@ -183,6 +186,71 @@ function go(i) {
 }
 
 let startBoard = null;
+
+// ---------- 내보내기 · 가져오기 ----------
+function stamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+function download(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportCurrent() {
+  if (!A.game) return;
+  download(`palamedes-${stamp(new Date(A.game.date))}.json`, exportText([A.game]));
+  setStatus('이 판을 파일로 내보냈어.');
+}
+
+function exportAll() {
+  if (!A.games.length) return;
+  download(`palamedes-games-${stamp()}.json`, exportText(A.games));
+  setStatus(`저장된 ${A.games.length}판을 파일로 내보냈어.`);
+}
+
+async function importFile(file) {
+  let parsed;
+  try {
+    parsed = parseImport(await file.text());
+  } catch (err) {
+    setStatus(`가져오지 못했어: ${err.message}`);
+    return;
+  }
+  const { games, skipped } = parsed;
+  if (!games.length) {
+    setStatus(`새로 가져올 판이 없어(이미 있는 판 ${skipped}개).`);
+    return;
+  }
+  // 파일의 첫 판이 목록 맨 위에 오도록 뒤에서부터 저장.
+  for (const g of [...games].reverse()) saveGame(g);
+  A.games = loadGames();
+  fillSelect();
+  const kept = games.filter((g) => A.games.some((x) => x.id === g.id)).length;
+  const dropped = games.length - kept;
+  const notes = [skipped ? `이미 있는 판 ${skipped}개는 건너뜀` : '', dropped ? `저장 한도(${GAME_LIMIT}판)를 넘어 ${dropped}개는 못 담음` : '']
+    .filter(Boolean)
+    .join(', ');
+  els.select.value = String(games[0].id);
+  await openGame(games[0].id);
+  setStatus(`${kept}판을 가져왔어${notes ? ` (${notes})` : ''}. 수가 규칙에 안 맞으면 그 수에 분석 실패로 표시돼.`);
+}
+
+els.importBtn.addEventListener('click', () => els.file.click());
+els.file.addEventListener('change', () => {
+  const f = els.file.files[0];
+  els.file.value = '';
+  if (f) importFile(f);
+});
+els.exportBtn.addEventListener('click', exportCurrent);
+els.exportAllBtn.addEventListener('click', exportAll);
 
 els.select.addEventListener('change', () => openGame(els.select.value));
 els.prev.addEventListener('click', () => go(A.cur - 1));

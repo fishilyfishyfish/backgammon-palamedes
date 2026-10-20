@@ -24,6 +24,12 @@
         <select id="game-select"></select>
       </label>
       <p id="status" class="status" aria-live="polite">엔진을 불러오는 중…</p>
+      <div class="io">
+        <button id="btn-import" class="btn" type="button">가져오기</button>
+        <button id="btn-export" class="btn" type="button">이 판 내보내기</button>
+        <button id="btn-export-all" class="btn" type="button">전부 내보내기</button>
+        <input id="file-import" type="file" accept=".json,application/json" hidden>
+      </div>
 
       <dl id="summary" class="pips"></dl>
 

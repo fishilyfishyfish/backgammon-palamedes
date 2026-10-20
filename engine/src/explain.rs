@@ -249,7 +249,7 @@ fn sentence(
                 let tail = if sb == 0 {
                     format!("{better}는 맞을 블롯을 안 남겨.")
                 } else {
-                    format!("{better}는 {sb}개야.")
+                    format!("{better}는 36개 중 {sb}개야.")
                 };
                 format!(
                     "{worse}는 {what} 남겨서 상대가 {any}맞힐 수 있는 조합이 36개 중 {sw}개야. {tail}"

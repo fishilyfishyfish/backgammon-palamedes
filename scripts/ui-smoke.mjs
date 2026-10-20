@@ -35,7 +35,7 @@ await new Promise((r) => server.listen(0, r));
 const url = `http://127.0.0.1:${server.address().port}/?fast`;
 
 const browser = await playwright.chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1024, height: 768 }, hasTouch: true });
+const page = await browser.newPage({ viewport: { width: 1024, height: 768 }, hasTouch: true, acceptDownloads: true });
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
@@ -143,6 +143,36 @@ const summary = await ap.evaluate(() => {
 });
 console.log(`analysis: ${JSON.stringify(summary)}`);
 if (summary.errs) throw new Error('analysis errors');
+// 내보내기 → 저장소 비우기 → 가져오기 왕복. 같은 판이 같은 결과로 분석되는지 확인.
+const before = await ap.evaluate(() => {
+  const A = window.__palamedesAnalysis.state;
+  return { id: A.game.id, n: A.game.entries.length, losses: A.results.map((r) => r.loss) };
+});
+const [dl] = await Promise.all([ap.waitForEvent('download'), ap.locator('#btn-export').click()]);
+const exported = await dl.path();
+const file = JSON.parse(fs.readFileSync(exported, 'utf8'));
+if (file.format !== 'palamedes-games' || file.games.length !== 1) throw new Error('bad export file');
+await ap.evaluate(() => localStorage.removeItem('palamedes.games'));
+await ap.reload();
+await ap.waitForFunction(() => /저장된 기보가 없어/.test(document.getElementById('status').textContent));
+// 깨진 파일은 거부.
+await ap.locator('#file-import').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"games":[{"entries":[{"side":3}]}]}') });
+await ap.waitForFunction(() => /가져오지 못했어/.test(document.getElementById('status').textContent));
+await ap.locator('#file-import').setInputFiles(exported);
+await ap.waitForFunction((n) => {
+  const A = window.__palamedesAnalysis.state;
+  return A.game && A.game.entries.length === n && A.results.length === n && A.results.every(Boolean) && /가져왔어/.test(document.getElementById('status').textContent);
+}, before.n, { timeout: 60000 });
+const after = await ap.evaluate(() => {
+  const A = window.__palamedesAnalysis.state;
+  return { id: A.game.id, losses: A.results.map((r) => r.loss), games: A.games.length };
+});
+if (after.id !== before.id || JSON.stringify(after.losses) !== JSON.stringify(before.losses)) throw new Error('import round trip mismatch');
+// 같은 파일을 다시 가져오면 건너뛴다.
+await ap.locator('#file-import').setInputFiles(exported);
+await ap.waitForFunction(() => /새로 가져올 판이 없어/.test(document.getElementById('status').textContent));
+console.log(`export/import: ${before.n} moves round-tripped, games after import ${after.games}`);
+
 for (let i = 0; i < 5; i++) await ap.locator('#btn-next').click();
 await ap.locator('[data-show="best"]').click();
 
