@@ -4,7 +4,8 @@
 //   board: 52칸 배열, view: {color, home},
 //   selectable?: Set(출발점), selected?: 출발점, dests?: [도착점],   // 사람 기준 포인트, 0 = 베어오프, 25 = 바
 //   dice?: {side, list: [{d, used}]}, opening?: [사람 눈, AI 눈],
-//   lastMove?: {side, steps}, hint?: {steps}   // steps는 그 진영 기준 좌표, hint는 사람 수
+//   lastMove?: {side, steps}, hint?: {steps},   // steps는 그 진영 기준 좌표, hint는 사람 수
+//   cube?: {value, owner: null | 0 | 1}            // 더블링 큐브(두 트레이 사이). 가운데면 64로 표시
 // }
 
 import { AI, BAR, HUMAN, idx } from './common.js';
@@ -167,6 +168,18 @@ export function renderBoard(svg, m) {
     const gap = 54;
     const x0 = cx - ((list.length - 1) * gap) / 2;
     list.forEach((f, i) => parts.push(dieSvg(x0 + i * gap, G.mid, f.d, side, f.used)));
+  }
+
+  // 더블링 큐브: 두 트레이 사이. 소유자 쪽(사람 아래, AI 위)으로 조금 치우치고 그쪽 색으로 테두리.
+  if (m.cube) {
+    const size = 44;
+    const cx = X(G.trayX + G.trayW / 2);
+    const shift = m.cube.owner === null || m.cube.owner === undefined ? 0 : m.cube.owner === HUMAN ? 8 : -8;
+    const cy = G.mid + shift;
+    const label = m.cube.owner === null || m.cube.owner === undefined ? 64 : m.cube.value;
+    const ownerCls = m.cube.owner === null || m.cube.owner === undefined ? '' : ` owner-${tone(m.cube.owner)}`;
+    parts.push(`<g class="cube${ownerCls}"><rect x="${cx - size / 2}" y="${cy - size / 2}" width="${size}" height="${size}" rx="7"/>`);
+    parts.push(`<text x="${cx}" y="${cy}">${label}</text></g>`);
   }
 
   // 터치 영역(맨 위).

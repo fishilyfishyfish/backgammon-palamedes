@@ -299,6 +299,15 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .mv-btn.cur { background: var(--accent); color: var(--accent-text); }
 .mv-btn.cur .dice, .mv-btn.cur .mark { color: inherit; }
 
+.cube rect { fill: var(--surface); stroke: var(--muted); stroke-width: 2; }
+.cube text { fill: var(--text); font-size: 20px; font-weight: 800; text-anchor: middle; dominant-baseline: central; }
+.cube.owner-w rect { stroke: var(--white-edge); stroke-width: 4; }
+.cube.owner-b rect { stroke: var(--black-checker); stroke-width: 4; }
+.rollout { margin-top: 8px; }
+.rollout .btn { min-height: 44px; width: 100%; }
+.cube-act { color: var(--accent); font-weight: 600; margin-right: 4px; }
+.match-info { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+
 .hint-from { fill: none; stroke: var(--hint); stroke-width: 4; stroke-dasharray: 4 4; }
 .hint-to { fill: var(--hint); fill-opacity: 0.35; stroke: var(--hint); stroke-width: 3; }
 .hint-n { fill: var(--text); font-size: 20px; font-weight: 800; text-anchor: middle; dominant-baseline: central; }

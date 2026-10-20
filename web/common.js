@@ -32,9 +32,9 @@ export const storage = {
 };
 
 // 화면 설정. color: 사람 말 색('white'|'black'), home: 사람 홈 위치('right'|'left'),
-// ai: 상대('nn' | 'baseline' | 'random'), coach: 친절 모드('on' | 'off').
+// ai: 상대('nn' | 'baseline' | 'random'), coach: 친절 모드('on' | 'off'), match: 매치 길이('0' = 머니, '3' | '5' | '7').
 export function loadView() {
-  return { color: 'white', home: 'right', ai: 'nn', coach: 'on', ...storage.get('palamedes.view', {}) };
+  return { color: 'white', home: 'right', ai: 'nn', coach: 'on', match: '0', ...storage.get('palamedes.view', {}) };
 }
 
 // 엔진 Worker와 {id, fn, args} RPC.
@@ -60,7 +60,11 @@ export function createEngine(onError) {
 }
 
 // ---------- 기보 저장 ----------
-// 판마다 {id, date, ai, entries: [{side, dice, notation, before, after}], result}. 최근 GAME_LIMIT판만 남긴다.
+// 판마다 {id, date, ai, match, entries, result}. 최근 GAME_LIMIT판만 남긴다.
+//   match: null(머니) | {length, score: [사람, AI](판 시작 때), post(크로포드 판이 지났는가)}
+//   entries: 수 {side, dice, notation, before, after, cube} | 큐브 {type: 'cube', side, action: 'double'|'take'|'pass', board, cube}
+//   cube: 그 시점(수를 두기 전·큐브 동작 전)의 {value, owner: null|0|1}
+//   result: {winner, points, passed?}
 const GAMES_KEY = 'palamedes.games';
 export const GAME_LIMIT = 20;
 
@@ -80,11 +84,12 @@ export function saveGame(game) {
 }
 
 // ---------- 내보내기 · 가져오기 ----------
-// 파일 형식: {format: 'palamedes-games', version: 1, exported, games: [게임...]}. 게임 하나나 게임 배열만 있어도 받는다.
+// 파일 형식: {format: 'palamedes-games', version: 2, exported, games: [게임...]}. 게임 하나나 게임 배열만 있어도 받는다.
+// version 1(큐브·매치 정보 없음)도 받는다. 없는 값은 큐브 1·가운데·머니로 본다.
 export const EXPORT_FORMAT = 'palamedes-games';
 
 export function exportText(games) {
-  return JSON.stringify({ format: EXPORT_FORMAT, version: 1, exported: new Date().toISOString(), games }, null, 1);
+  return JSON.stringify({ format: EXPORT_FORMAT, version: 2, exported: new Date().toISOString(), games }, null, 1);
 }
 
 const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
@@ -99,19 +104,41 @@ function validBoard(b) {
   return true;
 }
 
+function cleanCube(c, where) {
+  if (c === undefined || c === null) return { value: 1, owner: null };
+  const okValue = isInt(c.value, 1, 64) && (c.value & (c.value - 1)) === 0;
+  const okOwner = c.owner === null || c.owner === undefined || isInt(c.owner, 0, 1);
+  if (!okValue || !okOwner) throw new Error(`${where}: 큐브 값이 이상해`);
+  return { value: c.value, owner: c.owner ?? null };
+}
+
+function cleanMatch(m, where) {
+  if (m === undefined || m === null) return null;
+  const ok = isInt(m.length, 1, 25) && Array.isArray(m.score) && m.score.length === 2 && m.score.every((x) => isInt(x, 0, m.length - 1));
+  if (!ok) throw new Error(`${where}: 매치 점수가 이상해`);
+  return { length: m.length, score: m.score.slice(), post: !!m.post };
+}
+
 function cleanGame(g, n) {
   if (!g || typeof g !== 'object' || !Array.isArray(g.entries)) throw new Error(`${n}번째 판: entries가 없어`);
   const entries = g.entries.map((e, i) => {
-    const where = `${n}번째 판 ${i + 1}번째 수`;
+    const where = `${n}번째 판 ${i + 1}번째 항목`;
     if (!e || !isInt(e.side, 0, 1)) throw new Error(`${where}: side가 0이나 1이 아니야`);
+    const cube = cleanCube(e.cube, where);
+    if (e.type === 'cube') {
+      if (!['double', 'take', 'pass'].includes(e.action)) throw new Error(`${where}: 큐브 동작이 이상해`);
+      if (!validBoard(e.board)) throw new Error(`${where}: 판 배열이 이상해`);
+      return { type: 'cube', side: e.side, action: e.action, board: e.board.slice(), cube };
+    }
     if (!Array.isArray(e.dice) || e.dice.length !== 2 || !e.dice.every((d) => isInt(d, 1, 6))) throw new Error(`${where}: 주사위가 이상해`);
     if (!validBoard(e.before) || !validBoard(e.after)) throw new Error(`${where}: 판 배열이 이상해`);
-    return { side: e.side, dice: e.dice.slice(), notation: typeof e.notation === 'string' ? e.notation : '', before: e.before.slice(), after: e.after.slice() };
+    return { side: e.side, dice: e.dice.slice(), notation: typeof e.notation === 'string' ? e.notation : '', before: e.before.slice(), after: e.after.slice(), cube };
   });
   const r = g.result;
-  const result = r && isInt(r.winner, 0, 1) && isInt(r.points, 1, 3) ? { winner: r.winner, points: r.points } : null;
+  const result = r && isInt(r.winner, 0, 1) && isInt(r.points, 1, 192) ? { winner: r.winner, points: r.points, passed: !!r.passed } : null;
+  const match = cleanMatch(g.match, `${n}번째 판`);
   const date = typeof g.date === 'string' && !Number.isNaN(Date.parse(g.date)) ? g.date : new Date().toISOString();
-  return { id: Number.isFinite(g.id) ? g.id : Date.parse(date), date, ai: typeof g.ai === 'string' ? g.ai : 'unknown', entries, result };
+  return { id: Number.isFinite(g.id) ? g.id : Date.parse(date), date, ai: typeof g.ai === 'string' ? g.ai : 'unknown', match, entries, result };
 }
 
 // 파일 내용 → 게임 목록. 형식이 틀리면 이유를 담은 Error.
@@ -125,7 +152,7 @@ export function parseImport(text) {
   }
   let list;
   if (data && data.format === EXPORT_FORMAT) {
-    if (data.version !== 1) throw new Error(`지원하지 않는 버전이야: ${data.version}`);
+    if (data.version !== 1 && data.version !== 2) throw new Error(`지원하지 않는 버전이야: ${data.version}`);
     list = data.games;
   } else {
     list = Array.isArray(data) ? data : [data];
@@ -147,6 +174,23 @@ export function parseImport(text) {
     out.push(g);
   }
   return { games: out, skipped };
+}
+
+// 엔진 ctx_json: 큐브 상태와 매치 점수(점수 배열은 진영 순서 [사람(0), AI(1)]).
+export function ctxJson(cube, match) {
+  return JSON.stringify({
+    cube: { value: cube ? cube.value : 1, owner: cube ? cube.owner : null },
+    match: match && match.length ? { length: match.length, score: match.score, post: !!match.post } : null,
+  });
+}
+
+// 손실 → 등급(엔진 analysis.rs와 같은 임계값). 큐브 판단처럼 엔진이 등급을 안 주는 경우에 쓴다.
+export function gradeOf(loss, isBest) {
+  if (isBest) return { grade: 'best', label: '최선', mark: '' };
+  if (loss >= 0.16) return { grade: 'very_bad', label: '매우 나쁨', mark: '??' };
+  if (loss >= 0.08) return { grade: 'bad', label: '나쁨', mark: '?' };
+  if (loss >= 0.04) return { grade: 'doubtful', label: '의심스러움', mark: '?!' };
+  return { grade: 'good', label: '괜찮음', mark: '' };
 }
 
 // 등급 → CSS 클래스.

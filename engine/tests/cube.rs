@@ -148,3 +148,19 @@ fn match_context_values() {
         CubeAction::NoDouble
     );
 }
+
+#[test]
+fn cube_reason_sentences_use_values() {
+    use palamedes::cube::cube_reasons;
+    let d = money_decision(&plain(0.72), Owner::Centered, 0.68);
+    let r = cube_reasons(&d, false, false);
+    assert!(r[0].contains("72.0%"), "{r:?}");
+    assert!(r.iter().any(|s| s.contains("받아야 해")), "{r:?}");
+    let t = cube_reasons(&d, true, false);
+    assert!(
+        t[0].contains("28.0%") && t[1].contains("받는 게 맞아"),
+        "{t:?}"
+    );
+    let d = money_decision(&plain(0.5), Owner::Centered, 0.68);
+    assert!(cube_reasons(&d, false, true)[1].contains("정규화 매치 에퀴티"));
+}

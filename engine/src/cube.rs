@@ -216,3 +216,73 @@ pub fn decide<E: crate::eval::Evaluator + Clone>(
         .cube_decision(&probs, owner, x),
     }
 }
+
+/// 큐브 판단 근거 문장. 값은 모두 `d`에서 가져온다. `for_taker`면 더블을 받은 쪽 입장(받을지 말지)으로 쓴다.
+/// `match_play`면 에퀴티 단위가 정규화 매치 에퀴티라고 밝힌다.
+pub fn cube_reasons(d: &CubeDecision, for_taker: bool, match_play: bool) -> Vec<String> {
+    let pct = |x: f32| format!("{:.1}%", 100.0 * x);
+    let unit = if match_play {
+        "정규화 매치 에퀴티"
+    } else {
+        "큐브 1 기준 에퀴티"
+    };
+    let p = &d.probs;
+    let mut out = Vec::new();
+    // 상대가 받을 수 있는 최소 승률 = 1 − 더블한 쪽의 캐시 포인트.
+    let taker_needs = 1.0 - d.cash_point;
+    let taker_has = 1.0 - p.win;
+    if for_taker {
+        out.push(format!(
+            "더블한 쪽의 이길 확률은 {}(개먼승 {}), 내 이길 확률은 {}야.",
+            pct(p.win),
+            pct(p.win_gammon),
+            pct(taker_has)
+        ));
+        out.push(format!(
+            "받으려면 이길 확률이 대략 {} 이상이어야 해(테이크 포인트, 큐브 효율 {:.2} 근사). 그래서 {}.",
+            pct(taker_needs),
+            d.efficiency,
+            if d.take { "받는 게 맞아" } else { "포기하는 게 맞아" }
+        ));
+        out.push(format!(
+            "받으면 더블한 쪽 {unit}가 {:+.3}, 포기하면 {:+.3}.",
+            d.double_take, d.double_pass
+        ));
+        return out;
+    }
+    out.push(format!(
+        "이길 확률 {}, 개먼승 {}, 개먼패 {}.",
+        pct(p.win),
+        pct(p.win_gammon),
+        pct(p.lose_gammon)
+    ));
+    let best = d.double_take.min(d.double_pass);
+    match d.action {
+        CubeAction::NoDouble => out.push(format!(
+            "지금 더블하면 손해야: 노 더블 {:+.3}, 더블했을 때 {:+.3}({unit}).",
+            d.no_double, best
+        )),
+        CubeAction::DoubleTake | CubeAction::DoublePass => out.push(format!(
+            "더블하면 {unit}가 {:+.3}에서 {:+.3}로 올라가.",
+            d.no_double, best
+        )),
+        CubeAction::TooGood => out.push(format!(
+            "더블하면 상대가 포기해서 {:+.3}이지만, 계속 두면 {:+.3}라서 개먼을 노리는 게 나아.",
+            d.double_pass, d.no_double
+        )),
+    }
+    if d.double {
+        out.push(format!(
+            "상대 이길 확률 {}는 상대가 받을 수 있는 최소 {}보다 {} 상대는 {}.",
+            pct(taker_has),
+            pct(taker_needs),
+            if d.take { "높아서" } else { "낮아서" },
+            if d.take {
+                "받아야 해"
+            } else {
+                "포기해야 해"
+            }
+        ));
+    }
+    out
+}

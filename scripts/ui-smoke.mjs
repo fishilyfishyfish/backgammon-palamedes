@@ -46,7 +46,9 @@ const state = () => page.evaluate(() => {
     phase: S.phase, busy: S.busy, selected: S.selected, result: S.result,
     options: S.ts ? S.ts.options.map((o) => [o.from, o.to]) : [], done: S.ts ? S.ts.done : false,
     groups: S.groups.length, history: S.history.length, stack: S.undoStack.length,
-    warning: !!S.warning, hint: !!S.hint,
+    warning: !!S.warning, hint: !!S.hint, cubeWarn: !!S.cubeWarn, cubeOffer: !!S.cubeOffer,
+    canDouble: !document.getElementById('btn-double').disabled,
+    match: S.match, matchOver: !!(S.match && S.match.length && S.match.score.some((x) => x >= S.match.length)),
   };
 });
 async function waitIdle() {
@@ -59,7 +61,11 @@ const tap = (p) => page.locator(`.hit[data-point="${p}"]`).tap();
 
 await page.goto(url);
 await waitIdle();
-const tally = { 1: 0, 2: 0, 3: 0 };
+const tally = {};
+let doubles = 0;
+let answers = 0;
+let cubeWarns = 0;
+let matchGames = 0;
 let undos = 0;
 let warnings = 0;
 let hints = 0;
@@ -72,12 +78,41 @@ for (let g = 0; g < games; g++) {
   await page.locator(`[data-view="color:${g % 2 ? 'black' : 'white'}"]`).click();
   await page.locator(`[data-view="home:${g % 4 >= 2 ? 'left' : 'right'}"]`).click();
   await page.locator(`[data-view="ai:${['nn', 'baseline', 'random'][g % 3]}"]`).click();
-  for (let guard = 0; guard < 3000; guard++) {
+  // 두 번째 판은 3점 매치를 끝까지(여러 판), 나머지는 머니 게임 한 판.
+  const matchMode = g === 1 ? '3' : '0';
+  await page.locator(`[data-view="match:${matchMode}"]`).click();
+  await waitIdle();
+  for (let guard = 0; guard < 6000; guard++) {
     await waitIdle();
     const s = await state();
     if (s.phase === 'over') {
-      tally[s.result.points]++;
-      break;
+      tally[s.result.points] = (tally[s.result.points] || 0) + 1;
+      if (matchMode !== '0') matchGames++;
+      if (matchMode === '0' || s.matchOver) break;
+      await page.locator('#btn-new').click();
+      continue;
+    }
+    if (s.cubeWarn) {
+      cubeWarns++;
+      const btns = page.locator('#coach [data-coach]');
+      await btns.nth(Math.random() < 0.6 ? 1 : 0).click();
+      continue;
+    }
+    if (s.phase === 'cube') {
+      answers++;
+      if (shotDir && answers === 1) {
+        fs.mkdirSync(shotDir, { recursive: true });
+        await page.locator('#btn-hint').click();
+        await waitIdle();
+        await page.screenshot({ path: path.join(shotDir, 'cube-offer.png'), fullPage: true });
+      }
+      await page.locator(`[data-coach="${Math.random() < 0.7 ? 'take' : 'pass'}"]`).click();
+      continue;
+    }
+    if (s.phase === 'roll' && s.canDouble && Math.random() < 0.12) {
+      doubles++;
+      await page.locator('#btn-double').click();
+      continue;
     }
     if (s.phase === 'opening' || s.phase === 'roll') {
       await page.locator('#btn-roll').click();
@@ -122,7 +157,7 @@ for (let g = 0; g < games; g++) {
     throw new Error(`unexpected phase ${s.phase}`);
   }
 }
-console.log(`games: ${games}, results by points: ${JSON.stringify(tally)}, undos: ${undos}, hints: ${hints}, warnings: ${warnings}`);
+console.log(`games: ${games}, results by points: ${JSON.stringify(tally)}, undos: ${undos}, hints: ${hints}, warnings: ${warnings}, doubles: ${doubles}, cube answers: ${answers}, cube warnings: ${cubeWarns}, match games: ${matchGames}`);
 
 // 분석 화면: 저장된 마지막 판을 끝까지 분석하고 수마다 결과가 있는지 확인.
 // 같은 페이지(localStorage 공유)에서 분석 화면으로 이동.
@@ -172,6 +207,22 @@ if (after.id !== before.id || JSON.stringify(after.losses) !== JSON.stringify(be
 await ap.locator('#file-import').setInputFiles(exported);
 await ap.waitForFunction(() => /새로 가져올 판이 없어/.test(document.getElementById('status').textContent));
 console.log(`export/import: ${before.n} moves round-tripped, games after import ${after.games}`);
+
+// 롤아웃: 선택이 있던 첫 수에서 돌리고 끝까지 기다린다.
+const k = await ap.evaluate(() => window.__palamedesAnalysis.state.results.findIndex((r) => r && r.count > 1));
+await ap.locator(`[data-i="${k}"]`).click();
+const t0 = Date.now();
+await ap.locator(`[data-rollout="${k}"]`).click();
+await ap.waitForFunction((i) => {
+  const ro = window.__palamedesAnalysis.state.rollouts[i];
+  return ro && ro.done >= ro.total;
+}, k, { timeout: 120000 });
+const ro = await ap.evaluate((i) => {
+  const r = window.__palamedesAnalysis.state.rollouts[i];
+  return { rows: r.rows.length, trials: r.rows.map((x) => x.sums.trials), played: r.rows.some((x) => x.played) };
+}, k);
+if (!ro.played || ro.trials.some((n) => n !== 324)) throw new Error(`rollout incomplete ${JSON.stringify(ro)}`);
+console.log(`rollout: ${ro.rows} candidates × 324 trials in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
 for (let i = 0; i < 5; i++) await ap.locator('#btn-next').click();
 await ap.locator('[data-show="best"]').click();

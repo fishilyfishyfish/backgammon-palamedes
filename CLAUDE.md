@@ -37,7 +37,7 @@
    미러 대국 수천 판으로 기준선 대비 강도 측정.
 5. 설명 층과 분석 페이지(기보 복기, 수마다 실수 등급과 설명),
    친절한 대국 모드(힌트, 큰 실수 전 경고와 이유, 무르기). — **완료**
-6. 더블링 큐브 판단, 매치 플레이, 롤아웃.
+6. 더블링 큐브 판단, 매치 플레이, 롤아웃. — **완료**
 
 ### 원칙
 - 단계마다 동작하는 상태로 커밋. 테스트 통과 전엔 커밋 금지.
@@ -61,6 +61,11 @@ cd engine && cargo run --release --example train -- games=2000000 lr=0.02 lr_end
 cd engine && cargo run --release --example tune -- 600 hit_scale=0.8
 # 설명용 선형 대리 모델 다시 맞추기 (신경망 가중치를 바꾸면 같이) → weights/surrogate.json
 cd engine && cargo run --release --example fit_surrogate -- 2000 weights/surrogate.json 2
+# 큐브 정책 비교(신경망 2수 체커 플레이): 머니 게임 / n점 매치. 정책 janowski | money | never
+cd engine && cargo run --release --example cubematch -- money janowski never 2000
+cd engine && cargo run --release --example cubematch -- match janowski money 7 300
+# 계산한 매치 에퀴티 표 출력
+cd engine && cargo run --release --example met -- 9
 # 시작 국면 15가지 주사위의 선택과 상위 후보 (hand | nn | nn:<경로>)
 cd engine && cargo run --release --example openings -- nn
 
@@ -92,15 +97,18 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `engine/src/rng.rs` | 시드 고정 SplitMix64 (자기대국·미러 대국용) |
 | `engine/src/eval.rs` | `OutcomeProbs`(결과 확률·에퀴티), `Evaluator` 트레이트, 손 평가 `HandEval`/`HandWeights`, 레이스 공식 |
 | `engine/src/search.rs` | 1수 탐색 `rank_moves`/`best_move`, 2수 평가기 `TwoPly`, 깊이 지정 `rank_moves_ply`(`Search`, `Filter`), 웹용 `MoveSummary` |
-| `engine/src/play.rs` | `Player`(랜덤, `OnePly`, 깊이 지정 `Searcher`), `play_game`, 미러 대국 `mirror_match`/`parallel_mirror_match`와 통계 |
+| `engine/src/play.rs` | `Player`(랜덤, `OnePly`, 깊이 지정 `Searcher`), `play_game`, 미러 대국 `mirror_match`/`parallel_mirror_match`와 통계, 큐브 판·매치(`CubeAgent`, `play_cube_game`, `play_match`) |
 | `engine/src/nn.rs` | 신경망 `Net`(입력 인코딩, 희소 순전파·역전파, PNN1 저장 형식), `NnEval`(포함된 가중치) |
 | `engine/src/train.rs` | TD(λ) 자기대국: `self_play_game`(λ-리턴 표본), `train_round`(병렬 라운드) |
 | `engine/weights/` | `td.bin`(신경망 가중치), `surrogate.json`(설명용 대리 모델), `logs/`(학습 기록). 둘 다 엔진에 포함 |
-| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인) |
+| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인), `fit_surrogate`, `cubematch`(큐브 정책), `met`(MET 출력) |
 | `engine/src/analysis.rs` | 실수 등급 `Grade`(gnubg 기본 임계값), `analyze_move`, `hint` |
 | `engine/src/explain.rs` | 설명 층: 대리 모델 입력 `surrogate_inputs`, `Surrogate`(포함된 가중치), 주제별 기여도 `explain`, 템플릿 문장 |
-| `engine/src/wasm.rs` | 웹 바인딩. 상태 없음: 52칸 판 배열 + JSON |
-| `engine/tests/` | 규칙(`rules.rs`), 특징값(`features.rs`), 무작위 자기대국 불변식(`selfplay.rs`), 평가·탐색(`eval.rs`), 신경망·학습(`nn.rs`), 분석·설명(`analysis.rs`) |
+| `engine/src/cube.rs` | 큐브: Janowski 큐브 에퀴티, 머니 판단 `money_decision`, 국면 → 판단 `decide`, 근거 문장 `cube_reasons`, `CubeState` |
+| `engine/src/matchplay.rs` | 매치: 계산한 MET(`Met`), 점수 상황 `MatchCtx`(죽은 큐브 MWC, EMG, 큐브 있는 MWC, 큐브 판단) |
+| `engine/src/rollout.rs` | 롤아웃(층화·공통 난수, 구간별 호출) |
+| `engine/src/wasm.rs` | 웹 바인딩. 상태 없음: 52칸 판 배열 + JSON(큐브·매치는 `ctx_json`) |
+| `engine/tests/` | 규칙(`rules.rs`), 특징값(`features.rs`), 무작위 자기대국 불변식(`selfplay.rs`), 평가·탐색(`eval.rs`), 신경망·학습(`nn.rs`), 분석·설명(`analysis.rs`), 큐브·MET(`cube.rs`), 롤아웃·신경망 큐브 판단(`rollout.rs`) |
 | `web/app.js` | 대국 상태 기계, 입력 처리, 친절 모드(힌트·경고), 기보 저장 |
 | `web/analysis.html`, `web/analysis.js` | 분석 화면: 저장된 기보 복기, 수마다 등급·후보·설명 |
 | `web/board-view.js` | SVG 판 그리기(대국·분석 공용) |
@@ -270,6 +278,36 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
   `Surrogate.ply`에 맞춘 깊이를 기록하고, 테스트가 웹 깊이(2)와 같은지 확인한다.
 - 신경망 학습(자기대국)은 여전히 1수로 수를 고른다(2수면 학습이 약 50배 느려짐).
 
+### 더블링 큐브 · 매치 · 롤아웃 (6단계)
+- **큐브 판단(머니)**: 굴리기 전 국면을 2수(이번 굴림 21가지마다 최선 수)로 평가한 큐브 없는 확률에 Janowski 모델을 씌운다.
+  E = x·E_live + (1−x)·E_dead. 승패 평균 크기 W, L(개먼 포함)로 TP = (L−½)/(W+L+½), CP = (L+1)/(W+L+½).
+  큐브 효율 x: 접촉 0.68, 레이스 0.6 + 0.001×핍(최대 0.75). **x는 문헌의 흔한 값을 어림으로 쓴 것이고 롤아웃으로 맞추지 않았다.**
+  판단: 노 더블 vs min(더블/테이크 = 2·E(상대 소유), 더블/패스 = 1). 더블이 낫고 상대가 패스해야 하는데 노 더블이 더 크면
+  "너무 좋음(개먼 노림)". 근거 문장(`cube_reasons`)은 승률·테이크 포인트·세 에퀴티 값을 그대로 넣는다(화면 꼬리표: "근거(큐브 모델 근사)").
+- **MET**: 공개 표(Kazaross-XG2)는 이 환경에서 bkgm.com 접속이 막혀 못 받았다. 그래서 `matchplay.rs`에서 계산한다:
+  승률이 0.5에서 연속으로 움직이는 모델(시장 손실 없음), 이긴 판의 개먼 비율 0.26(백개먼 무시), 양쪽이 상대 테이크 포인트에서 더블,
+  더블을 받은 뒤는 같은 판·2배 큐브·소유권 이동으로 재귀, 판이 끝나면 다음 판 MET, 크로포드 규칙(처음 1점 남은 판은 큐브 없음,
+  그다음부터 Post 단계), 큐브 값 ≥ 필요 점수면 그쪽 더블은 무의미. 결과는 알려진 값과 1%p 안팎(2a-3a 59.5%, 크로포드 1a-2a 리더 68.5%,
+  4a-7a 69.4%; 2a-5a는 73.7%로 약 1%p 낮음). 나중에 공개 표를 쓰려면 환경 네트워크 설정에서 bkgm.com을 허용하고 표로 바꿀 것.
+- **점수 상황**: `MatchCtx{me, opp, cube, phase}`. 수 선택은 죽은 큐브 MWC를 EMG(현재 큐브로 한 판 이기면 +1, 지면 −1)로 바꾼 값으로
+  고른다(`Objective::Match`, 2수 탐색의 상대 응수도 상대 기준 MWC로 고름). 큐브 판단은 같은 연속 모델에 이 국면의 승률·개먼 비율을
+  넣은 살아 있는 큐브 MWC와 죽은 큐브 MWC를 x로 섞고, 결과를 EMG로 돌려 머니와 같은 눈금으로 등급을 매긴다.
+- **강도(미러, 체커는 모두 신경망 2수)**: 머니 게임에서 Janowski vs 더블 안 함·항상 받음 +0.400 ± 0.009 ppg(4000판).
+  7점 매치에서 점수 반영 vs 점수 무시(머니 판단) 55.5% ± 1.7%(600매치), 점수 반영 vs 큐브 안 씀 62.5% ± 1.6%.
+- **롤아웃**: 양쪽 신경망 1수로 끝까지, 처음 두 굴림 36×36 층화, 후보끼리 같은 시드(공통 난수). 큐브 없는 머니 기준만 있다.
+  웹은 후보(상위 3 + 둔 수)마다 324회를 36회씩 나눠 부르며 진행률을 보여 준다. 표준오차는 층화 효과를 뺀 보수적 값이라 크게 나온다.
+- **웹**:
+  - 굴리기 전 "더블" 버튼. AI(신경망·기준선)는 자기 엔진으로 더블·응답, 랜덤 AI는 더블하지 않고 항상 받는다.
+  - AI가 더블하면 받기/포기 카드. 친절 모드: 힌트가 큐브 판단도 보여 주고, 잘못된 더블·받기·포기나 더블할 때 그냥 굴리기가
+    나쁨(0.08) 이상이면 근거와 함께 경고([그래도 …]/[다시 고르기]).
+  - 설정 "게임": 머니 / 3·5·7점 매치. 판 진행 중 바꾸면 다음 새 게임부터. 매치 점수·크로포드 표시, 판이 끝나면 "다음 판".
+    지금 매치는 localStorage `palamedes.match`.
+  - 큐브는 두 트레이 사이에 그린다(가운데면 64, 소유자 쪽으로 조금 치우치고 그쪽 색 테두리).
+  - 기보 형식 v2: 판에 `match`(판 시작 때 점수), 수에 `cube`, 큐브 동작 항목 `{type: 'cube', side, action, board, cube}`. v1도 읽는다.
+  - 분석: 큐브 동작마다 등급(더블은 더블한 쪽 판단, 받음·포기는 더블한 쪽 기준 "받아야 하는가"와 비교), 더블 놓침(첫 수가 아니고
+    더블할 수 있었는데 안 했고 엔진은 더블) 표시 `D?`, 진영별 큐브 실수 요약, 수마다 롤아웃 버튼.
+  - 무르기는 큐브·매치 점수·머니 누적 점수까지 직전 내 턴 시작으로 되돌린다.
+
 ## 성능 기록
 
 측정 환경: 이 개발 컨테이너(x86_64 Linux), `cargo run --release --example bench`, 무작위 자기대국에서 모은 국면.
@@ -307,9 +345,16 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | 2026-10-20 | 대리 모델 맞추기 (2수, 2000판, 4스레드) | 90초, 검증 R² 0.537 |
 | 2026-10-20 | WASM 크기 (2수 추가) | 388 KB |
 | 2026-10-20 | 테스트 `cargo test --release` (2수 추가) | 44개 통과 |
+| 2026-10-20 | `cube_decision_json` (WASM, 신경망 2수 확률) | 약 6 ms |
+| 2026-10-20 | 롤아웃 (WASM, 신경망 1수) | 36회 약 0.1초, 웹에서 후보 4개 × 324회 약 6초 |
+| 2026-10-20 | 강도: 머니 큐브 Janowski vs 더블 안 함 | 4000판, +0.400 ± 0.009 ppg |
+| 2026-10-20 | 강도: 7점 매치 점수 반영 vs 점수 무시 큐브 | 600매치, 55.5% ± 1.7% |
+| 2026-10-20 | 강도: 7점 매치 점수 반영 vs 큐브 안 씀 | 600매치, 62.5% ± 1.6% |
+| 2026-10-20 | WASM 크기 (6단계) | 452 KB |
+| 2026-10-20 | 테스트 `cargo test --release` (6단계) | 54개 통과 |
 
 ## 현재 상태와 남은 문제
-- 1~5단계 완료. 웹 상대는 신경망(2수 탐색) 기본, 기준선(1수)·랜덤 선택 가능. 분석 화면과 친절 모드(2수 기준) 있음.
+- 1~6단계 완료. 웹 상대는 신경망(2수 탐색) 기본, 기준선(1수)·랜덤 선택 가능. 큐브, 머니/매치, 분석(수·큐브 등급, 롤아웃), 친절 모드.
 - 기보 표기에서 같은 말이 여러 번 움직인 경우의 묶음 표기는 단순 규칙(이어지는 걸음은 한 줄로)이다.
   표기가 여러 가지로 가능한 드문 경우(같은 칸에 둘이 도착 후 하나만 다시 이동) gnubg와 다르게 보일 수 있다.
 - UI 자동 점검(`scripts/ui-smoke.mjs`)은 CI에 넣지 않았다(로컬 Playwright 필요). 판마다 말 색·홈 위치·상대를 바꿔 가며 둔다.
@@ -320,3 +365,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 - 대리 모델 R²가 0.52라 설명이 차이의 절반 정도만 잡는다. 이유가 엉뚱해 보이는 수가 있으면 특징을 더하거나(예: 탈출 수, 상대 블롯 거리) 주제 묶음을 손볼 것.
 - 분석은 2수(gnubg 1-ply) 기준이다. gnubg 기본 분석(더 깊음)과 등급이 다를 수 있다.
 - 기보 저장소는 브라우저 localStorage(최근 20판)다. 오래 보관하려면 분석 화면에서 파일로 내보내야 한다.
+- MET는 모델로 계산한 값이다(공개 표 대신). 큐브 효율 x도 어림값이다. 둘 다 롤아웃이나 공개 표로 검증·교체할 여지가 있다.
+- 체커 플레이의 매치 목표는 죽은 큐브 MWC다(큐브 소유에 따른 수 선택 차이는 반영 안 함). 머니 게임 체커 플레이는 큐브 없는 에퀴티다.
+- 롤아웃은 큐브 없는 머니 기준만 있다(큐브·매치 롤아웃 없음). 웹 롤아웃 표준오차가 ±0.08 정도로 커서 가까운 후보는 가려내지 못한다.
+- 신경망 학습은 큐브 없이 했다. 큐브가 있는 판의 국면 분포는 학습 분포와 다를 수 있다.
