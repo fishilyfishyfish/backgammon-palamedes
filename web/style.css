@@ -355,6 +355,7 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .sel-ring { fill: none; stroke: var(--select); stroke-width: 5; }
 .can-ring { fill: none; stroke: var(--select); stroke-width: 2.5; stroke-dasharray: 6 5; opacity: 0.9; }
 .dest { fill: var(--dest); fill-opacity: 0.35; stroke: var(--dest); stroke-width: 3; stroke-dasharray: 7 5; }
+.kbd-focus { fill: none; stroke: var(--select); stroke-width: 4; }
 .dest-tray { fill: var(--dest); fill-opacity: 0.25; stroke: var(--dest); stroke-width: 3; }
 .last { fill: var(--last); }
 .die { fill: var(--die); stroke: #00000055; stroke-width: 1.5; }

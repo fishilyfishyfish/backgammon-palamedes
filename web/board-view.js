@@ -5,7 +5,8 @@
 //   selectable?: Set(출발점), selected?: 출발점, dests?: [도착점],   // 사람 기준 포인트, 0 = 베어오프, 25 = 바
 //   dice?: {side, list: [{d, used}]}, opening?: [사람 눈, AI 눈],
 //   lastMove?: {side, steps}, hint?: {steps},   // steps는 그 진영 기준 좌표, hint는 사람 수
-//   cube?: {value, owner: null | 0 | 1}            // 더블링 큐브(두 트레이 사이). 가운데면 64로 표시
+//   cube?: {value, owner: null | 0 | 1},           // 더블링 큐브(두 트레이 사이). 가운데면 64로 표시
+//   focus?: 포인트                                  // 키보드로 고른 칸(사람 기준, 0 = 베어오프, 25 = 바)
 // }
 
 import { AI, BAR, HUMAN, idx } from './common.js';
@@ -156,6 +157,18 @@ export function renderBoard(svg, m) {
     const { x, top } = pointGeom(to);
     const { w, b: bk } = countsAt(to);
     parts.push(`<circle class="dest" cx="${x}" cy="${slotY(top, bk ? 0 : Math.min(w, 4))}" r="${G.R}"/>`);
+  }
+
+  // 키보드 포커스: 칸 전체(터치 영역과 같은 크기)에 테두리.
+  if (m.focus != null) {
+    let r;
+    if (m.focus === 0) r = [RX(G.trayX - 2, G.trayW + 4), G.mid, G.trayW + 4, G.bottom - G.mid + 8];
+    else if (m.focus === BAR) r = [RX(G.barX + 2, G.barW - 4), G.top, G.barW - 4, G.bottom - G.top];
+    else {
+      const { x, top } = pointGeom(m.focus);
+      r = [x - G.PW / 2 + 2, top ? G.top : G.mid, G.PW - 4, G.mid - G.top];
+    }
+    parts.push(`<rect class="kbd-focus" x="${r[0]}" y="${r[1]}" width="${r[2]}" height="${r[3]}" rx="8"/>`);
   }
 
   // 주사위: 사람은 오른쪽(홈 쪽), AI는 반대쪽 판 가운데.

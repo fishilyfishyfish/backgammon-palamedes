@@ -4,7 +4,7 @@
 // 친절 모드(S.view.coach === 'on'): 수·큐브 힌트, 나쁨 이상의 수·큐브 판단 전 경고와 이유, 기보에 등급 표시.
 
 import {
-  AI, BAD, ENGINE_BASELINE, ENGINE_NN, HUMAN, PLY_BASELINE, PLY_NN,
+  AI, BAD, ENGINE_BASELINE, ENGINE_NN, BAR, HUMAN, PLY_BASELINE, PLY_NN,
   applyStep, createEngine, ctxJson, escapeHtml, gradeClass, gradeOf, loadView, saveGame, storage,
 } from './common.js';
 import { diceList, renderBoard } from './board-view.js';
@@ -35,6 +35,8 @@ const S = {
   groups: [], // 이번 턴에 둔 선택지별 걸음 묶음(무르기 단위)
   ts: null, // 엔진 turn_state
   selected: null,
+  // 키보드로 고른 칸(화살표로 이동, Enter·Space로 누름). 지금 누를 수 있는 칸이 아니면 render에서 지운다.
+  focus: null,
   history: [], // 수 {side, dice, notation, before, after, cube, grade?, mark?} | 큐브 {type: 'cube', side, action, board, cube, grade?, mark?}
   undoStack: [], // 사람 턴 시작 시점 스냅샷
   lastMove: null, // {side, steps}
@@ -87,11 +89,31 @@ function aiEngine() {
 const cubeDecision = (side, engine = ENGINE_NN) => call('cube_decision_json', S.board, side, engine, ctx());
 const actionName = { no_double: '노 더블', double_take: '더블/테이크', double_pass: '더블/패스', too_good: '너무 좋아서 노 더블(개먼 노림)' };
 
+// 지금 누를 수 있는 칸: 출발점을 안 골랐으면 출발점들, 골랐으면 그 도착점들. 바 → 높은 포인트 → 베어오프 순.
+function pressable() {
+  if (S.phase !== 'move' || !S.ts || S.warning) return [];
+  const opts = S.ts.options;
+  const list = S.selected === null ? opts.map((o) => o.from) : opts.filter((o) => o.from === S.selected).map((o) => o.to);
+  return [...new Set(list)].sort((a, b) => b - a);
+}
+const pointName = (p) => (p === 0 ? '베어오프' : p === BAR ? '바' : `${p}포인트`);
+
+function moveFocus(delta) {
+  const list = pressable();
+  if (!list.length) return;
+  const i = list.indexOf(S.focus);
+  S.focus = list[i < 0 ? (delta > 0 ? 0 : list.length - 1) : (i + delta + list.length) % list.length];
+  const what = S.selected === null ? '움직일 말' : `${pointName(S.selected)}에서 갈 칸`;
+  setStatus(`${what}: ${pointName(S.focus)} (${list.indexOf(S.focus) + 1}/${list.length}). Enter로 고르고, Esc로 취소.`);
+  render();
+}
+
 function render() {
   if (!S.board) return;
   const moving = S.phase === 'move' && S.ts;
   const selectable = new Set(moving ? S.ts.options.map((o) => o.from) : []);
   const dests = moving && S.selected !== null ? S.ts.options.filter((o) => o.from === S.selected).map((o) => o.to) : [];
+  if (S.focus !== null && !pressable().includes(S.focus)) S.focus = null;
   renderBoard(svg, {
     board: S.board,
     view: S.view,
@@ -104,6 +126,7 @@ function render() {
     // 힌트는 아직 아무것도 안 뒀을 때만 판에 그린다(턴 시작 기준 수라서).
     hint: S.hint && S.phase === 'move' && S.groups.length === 0 ? { steps: S.hint.best.steps } : null,
     cube: S.cube,
+    focus: S.focus,
   });
   renderPanel();
 }
@@ -696,9 +719,27 @@ els.undo.addEventListener('click', act.undo);
 els.hint.addEventListener('click', act.hint);
 els.double.addEventListener('click', act.double);
 els.newGame.addEventListener('click', act.newGame);
+// 판 키보드 조작: 화살표로 누를 수 있는 칸을 돌고, Enter·Space로 누른다(마우스로 그 칸을 누른 것과 같다).
+// 칸을 누른 뒤에는 다음 고를 칸 목록의 첫 칸으로 포커스를 옮긴다.
+async function pressFocus() {
+  await act.point(S.focus);
+  const list = pressable();
+  if (list.length) moveFocus(0);
+}
 document.addEventListener('keydown', (e) => {
-  if (e.target.closest('button, select, a')) return;
-  if (e.key === 'r' || e.key === ' ') { e.preventDefault(); act.roll(); }
+  if (e.target.closest('select, input, textarea')) return;
+  // 버튼·링크에 포커스가 있으면 Enter·Space는 그 버튼을 누르는 기본 동작에 맡긴다.
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('button, a')) return;
+  const arrows = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+  if (e.key in arrows && pressable().length) { e.preventDefault(); moveFocus(arrows[e.key]); }
+  else if ((e.key === 'Enter' || e.key === ' ') && S.focus !== null) { e.preventDefault(); pressFocus(); }
+  else if (e.key === 'Escape' && (S.focus !== null || S.selected !== null)) {
+    S.focus = null;
+    S.selected = null;
+    setStatus('움직일 말을 골라.');
+    render();
+  }
+  else if (e.key === 'r' || e.key === ' ') { e.preventDefault(); act.roll(); }
   else if (e.key === 'Enter') act.done();
   else if (e.key === 'h') act.hint();
   else if (e.key === 'd') act.double();

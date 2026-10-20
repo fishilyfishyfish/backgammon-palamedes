@@ -46,7 +46,7 @@ const state = () => page.evaluate(() => {
     phase: S.phase, busy: S.busy, selected: S.selected, result: S.result,
     options: S.ts ? S.ts.options.map((o) => [o.from, o.to]) : [], done: S.ts ? S.ts.done : false,
     groups: S.groups.length, history: S.history.length, stack: S.undoStack.length,
-    warning: !!S.warning, hint: !!S.hint, cubeWarn: !!S.cubeWarn, cubeOffer: !!S.cubeOffer,
+    focus: S.focus, warning: !!S.warning, hint: !!S.hint, cubeWarn: !!S.cubeWarn, cubeOffer: !!S.cubeOffer,
     canDouble: !document.getElementById('btn-double').disabled,
     match: S.match, matchOver: !!(S.match && S.match.length && S.match.score.some((x) => x >= S.match.length)),
   };
@@ -69,6 +69,7 @@ let matchGames = 0;
 let undos = 0;
 let warnings = 0;
 let hints = 0;
+let keyMoves = 0;
 for (let g = 0; g < games; g++) {
   if (g > 0) {
     await page.locator('#btn-new').click();
@@ -147,8 +148,24 @@ for (let g = 0; g < games; g++) {
         continue;
       }
       const [from, to] = s.options[Math.floor(Math.random() * s.options.length)];
-      if (s.selected !== from) await tap(from);
-      await tap(to);
+      if (Math.random() < 0.25) {
+        // 키보드로 두기: 화살표로 칸을 돌다가 Enter.
+        keyMoves++;
+        // 버튼에 포커스가 남아 있으면 Enter가 그 버튼을 누른다(기본 동작).
+        await page.evaluate(() => document.activeElement && document.activeElement.blur());
+        const pressTo = async (p) => {
+          for (let i = 0; i < 30 && (await state()).focus !== p; i++) await page.keyboard.press('ArrowRight');
+          if ((await state()).focus !== p) throw new Error(`keyboard focus never reached ${p}`);
+          await page.keyboard.press('Enter');
+          await waitIdle();
+        };
+        if (s.selected !== null && s.selected !== from) await page.keyboard.press('Escape');
+        if ((await state()).selected !== from) await pressTo(from);
+        await pressTo(to);
+      } else {
+        if (s.selected !== from) await tap(from);
+        await tap(to);
+      }
       await waitIdle();
       const after = await state();
       if (after.groups !== s.groups + 1) throw new Error(`move ${from}->${to} not applied: ${JSON.stringify(after)}`);
@@ -157,7 +174,7 @@ for (let g = 0; g < games; g++) {
     throw new Error(`unexpected phase ${s.phase}`);
   }
 }
-console.log(`games: ${games}, results by points: ${JSON.stringify(tally)}, undos: ${undos}, hints: ${hints}, warnings: ${warnings}, doubles: ${doubles}, cube answers: ${answers}, cube warnings: ${cubeWarns}, match games: ${matchGames}`);
+console.log(`games: ${games}, results by points: ${JSON.stringify(tally)}, undos: ${undos}, keyboard moves: ${keyMoves}, hints: ${hints}, warnings: ${warnings}, doubles: ${doubles}, cube answers: ${answers}, cube warnings: ${cubeWarns}, match games: ${matchGames}`);
 
 // 분석 화면: 저장된 마지막 판을 끝까지 분석하고 수마다 결과가 있는지 확인.
 // 같은 페이지(localStorage 공유)에서 분석 화면으로 이동.
