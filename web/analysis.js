@@ -1,6 +1,6 @@
-// 분석 화면: 저장된 기보를 수마다 엔진(신경망 1수 탐색)으로 평가하고, 실수 등급과 설명을 보여 준다.
+// 분석 화면: 저장된 기보를 수마다 엔진(신경망 2수 탐색)으로 평가하고, 실수 등급과 설명을 보여 준다.
 
-import { AI, ENGINE_NN, GAME_LIMIT, HUMAN, createEngine, escapeHtml, exportText, gradeClass, loadGames, loadView, parseImport, saveGame } from './common.js';
+import { AI, ENGINE_NN, GAME_LIMIT, PLY_NN, HUMAN, createEngine, escapeHtml, exportText, gradeClass, loadGames, loadView, parseImport, saveGame } from './common.js';
 import { diceList, renderBoard } from './board-view.js';
 
 const $ = (id) => document.getElementById(id);
@@ -50,7 +50,7 @@ async function openGame(id) {
     const e = entries[i];
     setStatus(`분석 중… ${i + 1}/${entries.length}`);
     try {
-      A.results[i] = await call('analyze_move_json', e.before, e.side, e.dice[0], e.dice[1], e.after, ENGINE_NN);
+      A.results[i] = await call('analyze_move_json', e.before, e.side, e.dice[0], e.dice[1], e.after, ENGINE_NN, PLY_NN);
     } catch (err) {
       A.results[i] = { error: err.message };
     }

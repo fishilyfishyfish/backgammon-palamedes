@@ -1,8 +1,9 @@
 //! 설명용 선형 대리 모델을 맞춘다: 같은 국면·주사위의 후보 수들 사이에서
 //! 특징값 차이(대리 입력) → 신경망 에퀴티 차이. 결과는 `weights/surrogate.json`.
-//! `cargo run --release --example fit_surrogate -- [판 수] [출력 경로]`
+//! `cargo run --release --example fit_surrogate -- [판 수] [출력 경로] [깊이(1|2, 기본 2)]`
 //!
-//! 국면은 신경망 자기대국에서 모은다. 각 차례마다 에퀴티 상위 10개 후보를 쓰고, 후보 평균을 빼서
+//! 국면은 신경망 자기대국에서 모은다. 각 차례마다 1수 기준 상위 10개 후보를 고르고, 그 에퀴티를 화면과 같은
+//! 깊이(기본 2수)로 다시 계산해 쓴다. 후보 평균을 빼서
 //! (국면 고정 효과 제거) 릿지 최소제곱으로 푼다. 판 번호 % 5 == 0인 판은 검증용으로 남긴다.
 
 // 작은 선형대수라 인덱스 루프가 식과 대응이 잘 보인다.
@@ -13,20 +14,27 @@ use palamedes::eval::is_race;
 use palamedes::explain::{K, NAMES, Surrogate, surrogate_inputs};
 use palamedes::features::compute_features;
 use palamedes::nn::NnEval;
-use palamedes::rank_moves;
 use palamedes::rng::Rng;
+use palamedes::search::{Filter, Search, rank_moves_ply};
 
 const TOP: usize = 10;
 
 /// 한 판에서 (판 번호, 차례별 [(입력, 에퀴티)]) 를 모은다.
-fn game_turns(e: &NnEval, seed: u64) -> Vec<Vec<([f32; K], f32)>> {
+fn game_turns(e: &NnEval, seed: u64, ply: u8) -> Vec<Vec<([f32; K], f32)>> {
+    let search = Search {
+        ply,
+        filter: Filter {
+            keep: TOP,
+            margin: f32::INFINITY,
+        },
+    };
     let mut dice = Rng::new(seed);
     let mut b = Board::start();
     let mut side = Side::White;
     let mut out = Vec::new();
     while b.result().is_none() {
         let (d1, d2) = dice.roll();
-        let ranked = rank_moves(e, &b, side, d1, d2);
+        let ranked = rank_moves_ply(e, &b, side, d1, d2, search, None);
         if ranked.len() >= 2 {
             let turn: Vec<_> = ranked
                 .iter()
@@ -154,6 +162,7 @@ fn main() {
         .get(1)
         .cloned()
         .unwrap_or_else(|| "weights/surrogate.json".into());
+    let ply: u8 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(2);
     let e = NnEval::embedded();
     let threads = 4u64;
     let per_thread: Vec<Vec<(u64, Vec<Vec<([f32; K], f32)>>)>> = std::thread::scope(|sc| {
@@ -163,7 +172,7 @@ fn main() {
                 sc.spawn(move || {
                     (0..games)
                         .filter(|g| g % threads == t)
-                        .map(|g| (g, game_turns(&e, 7_000_000 + g)))
+                        .map(|g| (g, game_turns(&e, 7_000_000 + g, ply)))
                         .collect()
                 })
             })
@@ -212,6 +221,7 @@ fn main() {
         features: NAMES.iter().map(|s| s.to_string()).collect(),
         weights: w.iter().map(|&v| v as f32).collect(),
         r2_heldout: r2 as f32,
+        ply,
         positions: train_pos,
         samples: train_n,
     };

@@ -68,6 +68,13 @@ pub trait Evaluator {
     fn evaluate(&self, board: &Board, on_roll: Side) -> OutcomeProbs;
 }
 
+/// 참조도 평가기로 쓴다(`&dyn Evaluator`를 `TwoPly`에 넣기 위해).
+impl<E: Evaluator + ?Sized> Evaluator for &E {
+    fn evaluate(&self, board: &Board, on_roll: Side) -> OutcomeProbs {
+        (**self).evaluate(board, on_roll)
+    }
+}
+
 /// 표준 정규 누적분포(Abramowitz–Stegun 7.1.26, 오차 1.5e-7).
 pub fn norm_cdf(x: f32) -> f32 {
     let x = x as f64;

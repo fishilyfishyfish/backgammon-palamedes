@@ -2,13 +2,15 @@
 //!
 //! 등급은 엔진 에퀴티 손실(최선 수 − 둔 수)로 매긴다. 임계값은 GNU 백개먼 기본값:
 //! 0.04 이상 의심스러움(?!), 0.08 이상 나쁨(?), 0.16 이상 매우 나쁨(??).
+//! 탐색 깊이는 `Search`로 받는다(웹은 2수). 2수일 때 둔 수는 후보 거르기와 상관없이 항상 2수로 평가해서
+//! 최선 수와 같은 깊이로 비교한다.
 
 use serde::Serialize;
 
 use crate::board::{Board, Side};
 use crate::eval::Evaluator;
 use crate::explain::{ANALYSIS, Explanation, HINT, Surrogate, explain};
-use crate::search::{MoveSummary, rank_moves};
+use crate::search::{MoveSummary, Search, rank_moves_ply};
 
 pub const DOUBTFUL: f32 = 0.04;
 pub const BAD: f32 = 0.08;
@@ -86,11 +88,11 @@ pub fn analyze_move<E: Evaluator + ?Sized>(
     sur: &Surrogate,
     before: &Board,
     side: Side,
-    d1: u8,
-    d2: u8,
+    (d1, d2): (u8, u8),
     after: &Board,
+    search: Search,
 ) -> Option<MoveAnalysis> {
-    let ranked = rank_moves(e, before, side, d1, d2);
+    let ranked = rank_moves_ply(&e, before, side, d1, d2, search, Some(after));
     let i = ranked.iter().position(|m| m.board == *after)?;
     let best = &ranked[0];
     let played = &ranked[i];
@@ -126,10 +128,10 @@ pub fn hint<E: Evaluator + ?Sized>(
     sur: &Surrogate,
     before: &Board,
     side: Side,
-    d1: u8,
-    d2: u8,
+    (d1, d2): (u8, u8),
+    search: Search,
 ) -> Hint {
-    let ranked = rank_moves(e, before, side, d1, d2);
+    let ranked = rank_moves_ply(&e, before, side, d1, d2, search, None);
     let explanation =
         (ranked.len() > 1).then(|| explain(side, &ranked[1].board, &ranked[0].board, sur, HINT));
     Hint {

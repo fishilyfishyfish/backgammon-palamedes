@@ -2,7 +2,7 @@
 // 엔진 진영은 사람 = 0, AI = 1로 고정이고, 말 색과 판 방향은 화면 설정(S.view)일 뿐이다.
 // 친절 모드(S.view.coach === 'on'): 힌트, 큰 실수(나쁨 이상) 전 경고와 이유, 수마다 등급 표시.
 
-import { AI, BAD, ENGINE_BASELINE, ENGINE_NN, HUMAN, applyStep, createEngine, escapeHtml, gradeClass, loadView, saveGame, storage } from './common.js';
+import { AI, BAD, ENGINE_BASELINE, ENGINE_NN, HUMAN, PLY_BASELINE, PLY_NN, applyStep, createEngine, escapeHtml, gradeClass, loadView, saveGame, storage } from './common.js';
 import { diceList, renderBoard } from './board-view.js';
 
 const call = createEngine((msg) => setStatus(`엔진을 불러오지 못했어: ${msg}`));
@@ -259,7 +259,7 @@ async function onPoint(p) {
 
 async function onHint() {
   if (!coachOn() || S.phase !== 'move' || !S.ts || S.ts.need === 0) return;
-  S.hint = await call('hint_json', S.turnStart, HUMAN, S.dice[0], S.dice[1], ENGINE_NN);
+  S.hint = await call('hint_json', S.turnStart, HUMAN, S.dice[0], S.dice[1], ENGINE_NN, PLY_NN);
   setStatus(S.groups.length ? '힌트는 이번 턴 처음 국면 기준이야.' : '번호가 붙은 칸이 추천 수야.');
   render();
 }
@@ -268,7 +268,7 @@ async function onDone() {
   if (S.phase !== 'move' || !S.ts || !S.ts.done || S.warning) return;
   let analysis = null;
   if (coachOn() && S.ts.need > 0) {
-    analysis = await call('analyze_move_json', S.turnStart, HUMAN, S.dice[0], S.dice[1], S.ts.board, ENGINE_NN);
+    analysis = await call('analyze_move_json', S.turnStart, HUMAN, S.dice[0], S.dice[1], S.ts.board, ENGINE_NN, PLY_NN);
     if (analysis.loss >= BAD) {
       S.warning = analysis;
       setStatus('잠깐, 큰 실수일 수 있어. 아래 설명을 보고 정해.');
@@ -314,8 +314,8 @@ async function aiTurn(dice) {
     const moves = await call('legal_moves_json', S.board, AI, dice[0], dice[1]);
     m = moves[Math.floor(Math.random() * moves.length)];
   } else {
-    const engine = S.view.ai === 'baseline' ? ENGINE_BASELINE : ENGINE_NN;
-    m = (await call('rank_moves_json', S.board, AI, dice[0], dice[1], engine))[0];
+    const [engine, ply] = S.view.ai === 'baseline' ? [ENGINE_BASELINE, PLY_BASELINE] : [ENGINE_NN, PLY_NN];
+    m = (await call('rank_moves_json', S.board, AI, dice[0], dice[1], engine, ply))[0];
   }
   if (m.steps.length === 0) {
     setStatus(`AI ${dice[0]}-${dice[1]}: 둘 수 있는 수가 없어.`);

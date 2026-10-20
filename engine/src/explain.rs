@@ -91,6 +91,9 @@ pub struct Surrogate {
     pub weights: Vec<f32>,
     /// 학습에 안 쓴 국면에서 후보 수 간 에퀴티 차이를 얼마나 설명하는가(결정계수).
     pub r2_heldout: f32,
+    /// 맞출 때 쓴 에퀴티의 탐색 깊이. 분석·힌트가 쓰는 깊이와 같아야 한다.
+    #[serde(default)]
+    pub ply: u8,
     pub positions: usize,
     pub samples: usize,
 }

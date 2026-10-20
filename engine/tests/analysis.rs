@@ -5,6 +5,7 @@ use palamedes::analysis::{Grade, analyze_move, hint};
 use palamedes::board::{Board, Side};
 use palamedes::explain::{ANALYSIS, Surrogate, explain};
 use palamedes::notation::format_move;
+use palamedes::search::{Search, TwoPly, rank_moves_ply};
 use palamedes::{NnEval, legal_moves};
 
 const W: Side = Side::White;
@@ -36,6 +37,8 @@ fn surrogate_loaded() {
     let s = Surrogate::embedded();
     assert!(s.r2_heldout > 0.3, "{}", s.r2_heldout);
     assert!(s.weights.iter().all(|w| w.is_finite()));
+    // 웹(분석·힌트·경고)은 2수로 평가하므로 대리 모델도 2수 에퀴티로 맞춘 것이어야 한다.
+    assert_eq!(s.ply, 2);
 }
 
 #[test]
@@ -43,7 +46,16 @@ fn analyze_opening_mistake() {
     let e = NnEval::embedded();
     let b = Board::start();
     let played = after(&b, W, 3, 1, "24/20");
-    let a = analyze_move(&e, Surrogate::embedded(), &b, W, 3, 1, &played).unwrap();
+    let a = analyze_move(
+        &e,
+        Surrogate::embedded(),
+        &b,
+        W,
+        (3, 1),
+        &played,
+        Search::ONE_PLY,
+    )
+    .unwrap();
     assert_eq!(a.best.notation, "8/5 6/5");
     assert!(a.loss > 0.04, "{}", a.loss);
     assert_ne!(a.grade, Grade::Best);
@@ -71,11 +83,31 @@ fn analyze_opening_mistake() {
     }
     // 최선 수를 두면 등급은 최선, 설명 없음.
     let best = after(&b, W, 3, 1, "8/5 6/5");
-    let a = analyze_move(&e, Surrogate::embedded(), &b, W, 3, 1, &best).unwrap();
+    let a = analyze_move(
+        &e,
+        Surrogate::embedded(),
+        &b,
+        W,
+        (3, 1),
+        &best,
+        Search::ONE_PLY,
+    )
+    .unwrap();
     assert_eq!((a.grade, a.loss, a.rank), (Grade::Best, 0.0, 1));
     assert!(a.explanation.is_none());
     // 합법수 결과가 아니면 None.
-    assert!(analyze_move(&e, Surrogate::embedded(), &b, W, 3, 1, &Board::start()).is_none());
+    assert!(
+        analyze_move(
+            &e,
+            Surrogate::embedded(),
+            &b,
+            W,
+            (3, 1),
+            &Board::start(),
+            Search::ONE_PLY
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -97,9 +129,66 @@ fn shot_sentence_uses_computed_numbers() {
 #[test]
 fn hint_opening() {
     let e = NnEval::embedded();
-    let h = hint(&e, Surrogate::embedded(), &Board::start(), W, 4, 2);
+    let h = hint(
+        &e,
+        Surrogate::embedded(),
+        &Board::start(),
+        W,
+        (4, 2),
+        Search::ONE_PLY,
+    );
     assert_eq!(h.best.notation, "8/4 6/4");
     assert!(h.margin > 0.0);
     assert!(h.top.len() >= 2);
     assert!(h.explanation.is_some());
+}
+
+#[test]
+fn two_ply_evaluator_sane() {
+    let e = NnEval::embedded();
+    let two = TwoPly { inner: e.clone() };
+    let b = Board::start();
+    let p = palamedes::Evaluator::evaluate(&two, &b, W);
+    assert!(p.win > 0.45 && p.win < 0.6, "{p:?}");
+    // 백·흑 대칭.
+    assert_eq!(
+        p,
+        palamedes::Evaluator::evaluate(&two, &b.swapped(), Side::Black)
+    );
+    // 종국은 확정값.
+    let done = board(&[], &[(6, 15)]);
+    assert_eq!(palamedes::Evaluator::evaluate(&two, &done, W).equity(), 2.0);
+}
+
+#[test]
+fn two_ply_ranking_and_analysis() {
+    let e = NnEval::embedded();
+    let b = Board::start();
+    let r = rank_moves_ply(&e, &b, W, 3, 1, Search::TWO_PLY, None);
+    assert_eq!(format_move(r[0].mv.steps()), "8/5 6/5");
+    assert!(r[0].ply == 2 && r[1].ply == 2);
+    // 2수 값끼리는 내림차순이고 1수 값은 뒤에 온다.
+    let k = r.iter().take_while(|m| m.ply == 2).count();
+    assert!(r[k..].iter().all(|m| m.ply == 1));
+    for w in r[..k].windows(2) {
+        assert!(w[0].equity >= w[1].equity);
+    }
+    // 걸러진 후보 밖의 수를 둬도 분석은 그 수를 2수로 평가한다.
+    let worst = r.last().unwrap().board;
+    let a = analyze_move(
+        &e,
+        Surrogate::embedded(),
+        &b,
+        W,
+        (3, 1),
+        &worst,
+        Search::TWO_PLY,
+    )
+    .unwrap();
+    assert_eq!(a.played.ply, 2);
+    assert_eq!(a.best.ply, 2);
+    assert!(a.loss > 0.0);
+    let h = hint(&e, Surrogate::embedded(), &b, W, (6, 1), Search::TWO_PLY);
+    assert_eq!(h.best.notation, "13/7 8/7");
+    assert!(h.top[0].ply == 2 && h.top[1].ply == 2);
 }

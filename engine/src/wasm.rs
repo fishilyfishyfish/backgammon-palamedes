@@ -14,7 +14,7 @@ use crate::features::compute_features_with_eval;
 use crate::movegen::{legal_moves_with_boards, next_steps, turn_options};
 use crate::nn::NnEval;
 use crate::notation::format_move;
-use crate::search::{MoveSummary, rank_moves};
+use crate::search::{MoveSummary, Search, rank_moves_ply};
 
 #[derive(Deserialize)]
 struct StepIn {
@@ -158,8 +158,9 @@ pub fn features_json(board: &[u8], on_roll: u8, engine: u8) -> Result<String, Js
     )))
 }
 
-/// 1수 탐색으로 모든 합법수를 에퀴티 내림차순으로. `engine`: 0 = 기준선, 1 = 신경망.
-/// `[{"steps":[...],"notation":"...","board":[52],"probs":{...},"equity":0.12}]` (수를 둔 쪽 기준).
+/// 모든 합법수를 에퀴티 내림차순으로. `engine`: 0 = 기준선, 1 = 신경망. `ply`: 1 또는 2.
+/// 2수면 걸러진 상위 후보만 2수 값이고 나머지는 1수 값이다(각 항목의 `ply`).
+/// `[{"steps":[...],"notation":"...","board":[52],"probs":{...},"equity":0.12,"ply":2}]` (수를 둔 쪽 기준).
 #[wasm_bindgen]
 pub fn rank_moves_json(
     board: &[u8],
@@ -167,10 +168,19 @@ pub fn rank_moves_json(
     d1: u8,
     d2: u8,
     engine: u8,
+    ply: u8,
 ) -> Result<String, JsError> {
     let (b, s) = (board_arg(board)?, side_arg(side)?);
     dice_arg(d1, d2)?;
-    let ranked = rank_moves(engine_arg(engine)?, &b, s, d1, d2);
+    let ranked = rank_moves_ply(
+        &engine_arg(engine)?,
+        &b,
+        s,
+        d1,
+        d2,
+        Search::from_ply(ply),
+        None,
+    );
     Ok(to_json(
         &ranked.iter().map(MoveSummary::from).collect::<Vec<_>>(),
     ))
@@ -185,17 +195,19 @@ pub fn analyze_move_json(
     d2: u8,
     after: &[u8],
     engine: u8,
+    ply: u8,
 ) -> Result<String, JsError> {
     let (b, s, a) = (board_arg(before)?, side_arg(side)?, board_arg(after)?);
     dice_arg(d1, d2)?;
+    let e = engine_arg(engine)?;
     let r = analyze_move(
-        engine_arg(engine)?,
+        &e,
         Surrogate::embedded(),
         &b,
         s,
-        d1,
-        d2,
+        (d1, d2),
         &a,
+        Search::from_ply(ply),
     )
     .ok_or_else(|| JsError::new("after is not a legal result"))?;
     Ok(to_json(&r))
@@ -203,16 +215,24 @@ pub fn analyze_move_json(
 
 /// 힌트: 추천 수, 상위 후보, 2위보다 나은 이유(근사).
 #[wasm_bindgen]
-pub fn hint_json(before: &[u8], side: u8, d1: u8, d2: u8, engine: u8) -> Result<String, JsError> {
+pub fn hint_json(
+    before: &[u8],
+    side: u8,
+    d1: u8,
+    d2: u8,
+    engine: u8,
+    ply: u8,
+) -> Result<String, JsError> {
     let (b, s) = (board_arg(before)?, side_arg(side)?);
     dice_arg(d1, d2)?;
+    let e = engine_arg(engine)?;
     Ok(to_json(&hint(
-        engine_arg(engine)?,
+        &e,
         Surrogate::embedded(),
         &b,
         s,
-        d1,
-        d2,
+        (d1, d2),
+        Search::from_ply(ply),
     )))
 }
 

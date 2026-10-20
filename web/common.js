@@ -6,6 +6,9 @@ export const BAR = 25;
 // 엔진 선택(rank_moves_json 등의 engine 인자).
 export const ENGINE_BASELINE = 0;
 export const ENGINE_NN = 1;
+// 탐색 깊이(ply 인자). 신경망 대국·힌트·경고·분석은 2수, 기준선 AI는 3단계 그대로 1수.
+export const PLY_BASELINE = 1;
+export const PLY_NN = 2;
 // 실수 등급 임계값(GNU 백개먼 기본값). 엔진(analysis.rs)과 같아야 한다.
 export const BAD = 0.08;
 

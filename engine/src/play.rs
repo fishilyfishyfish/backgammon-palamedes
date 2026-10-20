@@ -4,7 +4,7 @@ use crate::board::{Board, Side};
 use crate::eval::Evaluator;
 use crate::movegen::{Move, legal_moves};
 use crate::rng::Rng;
-use crate::search::best_move;
+use crate::search::{Search, best_move, rank_moves_ply};
 
 pub trait Player {
     fn name(&self) -> String;
@@ -55,6 +55,24 @@ impl<E: Evaluator> Player for OnePly<E> {
     }
     fn choose(&mut self, b: &Board, side: Side, d1: u8, d2: u8) -> Move {
         best_move(&self.eval, b, side, d1, d2).mv
+    }
+}
+
+/// 평가함수 + 설정한 깊이의 탐색(2수면 후보 거르기 포함).
+pub struct Searcher<E: Evaluator + Clone> {
+    pub eval: E,
+    pub search: Search,
+    pub label: String,
+}
+
+impl<E: Evaluator + Clone> Player for Searcher<E> {
+    fn name(&self) -> String {
+        self.label.clone()
+    }
+    fn choose(&mut self, b: &Board, side: Side, d1: u8, d2: u8) -> Move {
+        rank_moves_ply(&self.eval, b, side, d1, d2, self.search, None)
+            .swap_remove(0)
+            .mv
     }
 }
 
