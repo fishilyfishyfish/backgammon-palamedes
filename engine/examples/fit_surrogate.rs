@@ -27,6 +27,7 @@ fn game_turns(e: &NnEval, seed: u64, ply: u8) -> Vec<Vec<([f32; K], f32)>> {
             keep: TOP,
             margin: f32::INFINITY,
         },
+        objective: palamedes::search::Objective::Money,
     };
     let mut dice = Rng::new(seed);
     let mut b = Board::start();

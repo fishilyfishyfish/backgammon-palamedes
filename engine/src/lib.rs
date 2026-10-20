@@ -5,14 +5,17 @@
 
 pub mod analysis;
 pub mod board;
+pub mod cube;
 pub mod eval;
 pub mod explain;
 pub mod features;
+pub mod matchplay;
 pub mod movegen;
 pub mod nn;
 pub mod notation;
 pub mod play;
 pub mod rng;
+pub mod rollout;
 pub mod search;
 pub mod train;
 pub mod wasm;

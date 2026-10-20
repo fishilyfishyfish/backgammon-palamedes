@@ -146,7 +146,7 @@ fn hint_opening() {
 #[test]
 fn two_ply_evaluator_sane() {
     let e = NnEval::embedded();
-    let two = TwoPly { inner: e.clone() };
+    let two = TwoPly::new(e.clone());
     let b = Board::start();
     let p = palamedes::Evaluator::evaluate(&two, &b, W);
     assert!(p.win > 0.45 && p.win < 0.6, "{p:?}");

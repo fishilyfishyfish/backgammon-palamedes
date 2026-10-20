@@ -222,3 +222,204 @@ where
     }
     st
 }
+
+// ---------- 큐브가 있는 판과 매치 ----------
+
+use crate::cube::{CubeState, decide};
+use crate::matchplay::{MatchCtx, Phase};
+use crate::search::Objective;
+
+/// 큐브 정책. Never: 더블 안 하고 항상 받음. Janowski: `cube::decide`대로.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CubePolicy {
+    Never,
+    Janowski,
+    /// 점수를 무시하고 머니 판단을 그대로 쓴다(매치에서 비교용).
+    MoneyOnly,
+}
+
+pub trait CubePlayer {
+    fn name(&self) -> String;
+    fn choose(&mut self, b: &Board, side: Side, d1: u8, d2: u8, ctx: Option<MatchCtx>) -> Move;
+    /// 굴리기 전 더블할지.
+    fn double(&mut self, b: &Board, side: Side, cube: CubeState, ctx: Option<MatchCtx>) -> bool;
+    /// `side`가 더블을 받았을 때 받을지. `ctx`는 `side` 기준.
+    fn take(&mut self, b: &Board, side: Side, cube: CubeState, ctx: Option<MatchCtx>) -> bool;
+}
+
+pub struct CubeAgent<E: Evaluator + Clone> {
+    pub eval: E,
+    pub search: Search,
+    pub policy: CubePolicy,
+    pub label: String,
+}
+
+impl<E: Evaluator + Clone> CubeAgent<E> {
+    fn ctx_for_policy(&self, ctx: Option<MatchCtx>) -> Option<MatchCtx> {
+        if self.policy == CubePolicy::MoneyOnly {
+            None
+        } else {
+            ctx
+        }
+    }
+}
+
+impl<E: Evaluator + Clone> CubePlayer for CubeAgent<E> {
+    fn name(&self) -> String {
+        self.label.clone()
+    }
+
+    fn choose(&mut self, b: &Board, side: Side, d1: u8, d2: u8, ctx: Option<MatchCtx>) -> Move {
+        let obj = self
+            .ctx_for_policy(ctx)
+            .map(Objective::Match)
+            .unwrap_or(Objective::Money);
+        rank_moves_ply(
+            &self.eval,
+            b,
+            side,
+            d1,
+            d2,
+            self.search.with_objective(obj),
+            None,
+        )
+        .swap_remove(0)
+        .mv
+    }
+
+    fn double(&mut self, b: &Board, side: Side, cube: CubeState, ctx: Option<MatchCtx>) -> bool {
+        if self.policy == CubePolicy::Never {
+            return false;
+        }
+        decide(&self.eval, b, side, cube, self.ctx_for_policy(ctx)).double
+    }
+
+    fn take(&mut self, b: &Board, side: Side, cube: CubeState, ctx: Option<MatchCtx>) -> bool {
+        if self.policy == CubePolicy::Never {
+            return true;
+        }
+        // 더블한 쪽 입장에서 판단하고, 그쪽 기준 "상대가 받아야 하는가"를 쓴다.
+        let doubler = side.opp();
+        let dctx = self.ctx_for_policy(ctx).map(|c| c.swapped());
+        decide(&self.eval, b, doubler, cube, dctx).take
+    }
+}
+
+/// 큐브가 있는 한 판의 결과.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CubeGameResult {
+    pub winner: Side,
+    /// 이긴 쪽이 얻은 점수(큐브 × 1/2/3). 패스면 큐브 값.
+    pub points: u32,
+    pub cube: u8,
+    pub passed: bool,
+}
+
+/// 매치 진행 상황. length = 0이면 머니 게임.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MatchScore {
+    pub length: u8,
+    pub score: [u8; 2],
+    pub phase: Phase,
+}
+
+impl MatchScore {
+    pub fn ctx(&self, side: Side, cube: u8) -> Option<MatchCtx> {
+        (self.length > 0).then(|| MatchCtx {
+            me: self.length - self.score[side.idx()],
+            opp: self.length - self.score[side.opp().idx()],
+            cube,
+            phase: self.phase,
+        })
+    }
+}
+
+/// 큐브가 있는 한 판. 첫 수는 서로 하나씩 굴려 정하고, 그 뒤 매 차례 굴리기 전에 더블할 수 있다.
+pub fn play_cube_game(
+    players: [&mut dyn CubePlayer; 2],
+    seed: u64,
+    score: Option<MatchScore>,
+) -> CubeGameResult {
+    let [p0, p1] = players;
+    let ps: [&mut dyn CubePlayer; 2] = [p0, p1];
+    let mut dice = Rng::new(seed);
+    let (mut d1, mut d2) = loop {
+        let (w, b) = dice.roll();
+        if w != b {
+            break (w, b);
+        }
+    };
+    let mut side = if d1 > d2 { Side::White } else { Side::Black };
+    let mut b = Board::start();
+    let mut cube = CubeState::default();
+    let crawford = score.is_some_and(|s| s.ctx(Side::White, 1).is_some_and(|c| c.is_crawford()));
+    let ctx = |s: Side, c: &CubeState| score.and_then(|m| m.ctx(s, c.value));
+    let mut first = true;
+    loop {
+        if !first {
+            // 크로포드 판에서는 큐브를 못 쓴다. 매치에서 이미 이길 만큼 큐브가 커졌으면 더 올리지 않는다.
+            let useful = ctx(side, &cube).is_none_or(|c| (cube.value as u16) < c.me as u16);
+            if !crawford && cube.can_double(side) && cube.value < 64 && useful {
+                let i = side.idx();
+                if ps[i].double(&b, side, cube, ctx(side, &cube)) {
+                    let o = side.opp();
+                    if ps[o.idx()].take(&b, o, cube, ctx(o, &cube)) {
+                        cube = CubeState {
+                            value: cube.value * 2,
+                            owner: Some(o),
+                        };
+                    } else {
+                        return CubeGameResult {
+                            winner: side,
+                            points: cube.value as u32,
+                            cube: cube.value,
+                            passed: true,
+                        };
+                    }
+                }
+            }
+            (d1, d2) = dice.roll();
+        }
+        first = false;
+        let m = ps[side.idx()].choose(&b, side, d1, d2, ctx(side, &cube));
+        b.apply_steps(side, m.steps());
+        if let Some((w, mult)) = b.result() {
+            return CubeGameResult {
+                winner: w,
+                points: cube.value as u32 * mult as u32,
+                cube: cube.value,
+                passed: false,
+            };
+        }
+        side = side.opp();
+    }
+}
+
+/// 한 매치. 판마다 시드 seed·1000 + 판 번호. 이긴 쪽과 판 수.
+pub fn play_match(players: [&mut dyn CubePlayer; 2], length: u8, seed: u64) -> (Side, u32) {
+    let [p0, p1] = players;
+    let mut ps: [&mut dyn CubePlayer; 2] = [p0, p1];
+    let mut sc = MatchScore {
+        length,
+        score: [0, 0],
+        phase: Phase::Pre,
+    };
+    for g in 0.. {
+        let crawford = sc.ctx(Side::White, 1).unwrap().is_crawford();
+        let [a, b] = &mut ps;
+        let r = play_cube_game(
+            [&mut **a, &mut **b],
+            seed.wrapping_mul(1000).wrapping_add(g as u64),
+            Some(sc),
+        );
+        let w = r.winner.idx();
+        sc.score[w] = (sc.score[w] as u32 + r.points).min(length as u32) as u8;
+        if crawford {
+            sc.phase = Phase::Post;
+        }
+        if sc.score[w] >= length {
+            return (r.winner, g + 1);
+        }
+    }
+    unreachable!()
+}

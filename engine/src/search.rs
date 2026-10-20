@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::board::{Board, Side};
 use crate::eval::{Evaluator, OutcomeProbs};
+use crate::matchplay::MatchCtx;
 use crate::movegen::{Move, legal_moves_with_boards};
 
 #[derive(Clone, Debug)]
@@ -64,6 +65,48 @@ pub fn best_move<E: Evaluator + ?Sized>(
 #[derive(Clone, Debug)]
 pub struct TwoPly<E> {
     pub inner: E,
+    /// 진영별로 최선 응수를 고르는 기준([White, Black]). 머니면 둘 다 `Objective::Money`.
+    pub objectives: [Objective; 2],
+}
+
+impl<E> TwoPly<E> {
+    pub fn new(inner: E) -> TwoPly<E> {
+        TwoPly {
+            inner,
+            objectives: [Objective::Money; 2],
+        }
+    }
+
+    /// `side`의 목표가 `obj`일 때(상대 목표는 뒤집어서).
+    pub fn with_objective(inner: E, side: Side, obj: Objective) -> TwoPly<E> {
+        let mut objectives = [obj.swapped(); 2];
+        objectives[side.idx()] = obj;
+        TwoPly { inner, objectives }
+    }
+}
+
+/// 수를 고르는 기준. 머니: 큐브 없는 에퀴티. 매치: 죽은 큐브 매치 승률을 정규화 에퀴티(EMG)로 바꾼 값.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Objective {
+    Money,
+    Match(MatchCtx),
+}
+
+impl Objective {
+    pub fn value(&self, p: &OutcomeProbs) -> f32 {
+        match self {
+            Objective::Money => p.equity(),
+            Objective::Match(c) => c.emg(c.mwc_dead(p)),
+        }
+    }
+
+    /// 상대 관점.
+    pub fn swapped(&self) -> Objective {
+        match self {
+            Objective::Money => Objective::Money,
+            Objective::Match(c) => Objective::Match(c.swapped()),
+        }
+    }
 }
 
 /// 21가지 주사위와 36분의 가중치.
@@ -82,7 +125,10 @@ impl<E: Evaluator> Evaluator for TwoPly<E> {
             let best = legal_moves_with_boards(b, on_roll, d1, d2)
                 .into_iter()
                 .map(|(_, nb)| evaluate_after(&self.inner, &nb, on_roll))
-                .max_by(|x, y| x.equity().total_cmp(&y.equity()))
+                .max_by(|x, y| {
+                    let o = &self.objectives[on_roll.idx()];
+                    o.value(x).total_cmp(&o.value(y))
+                })
                 .expect("at least the empty move");
             acc.win += w * best.win;
             acc.win_gammon += w * best.win_gammon;
@@ -115,6 +161,8 @@ impl Default for Filter {
 pub struct Search {
     pub ply: u8,
     pub filter: Filter,
+    /// 수를 둔 쪽의 목표.
+    pub objective: Objective,
 }
 
 impl Search {
@@ -124,6 +172,7 @@ impl Search {
             keep: 0,
             margin: 0.0,
         },
+        objective: Objective::Money,
     };
     pub const TWO_PLY: Search = Search {
         ply: 2,
@@ -131,7 +180,12 @@ impl Search {
             keep: 8,
             margin: 0.16,
         },
+        objective: Objective::Money,
     };
+
+    pub fn with_objective(self, objective: Objective) -> Search {
+        Search { objective, ..self }
+    }
 
     pub fn from_ply(ply: u8) -> Search {
         if ply >= 2 {
@@ -154,12 +208,19 @@ pub fn rank_moves_ply<E: Evaluator + Clone>(
     include: Option<&Board>,
 ) -> Vec<ScoredMove> {
     let filter = search.filter;
-    let ranked = rank_moves(e, b, side, d1, d2);
+    let obj = search.objective;
+    let mut ranked = rank_moves(e, b, side, d1, d2);
+    if obj != Objective::Money {
+        for m in &mut ranked {
+            m.equity = obj.value(&m.probs);
+        }
+        ranked.sort_by(|a, b| b.equity.total_cmp(&a.equity));
+    }
     if search.ply < 2 || ranked.len() < 2 {
         return ranked;
     }
     let top = ranked[0].equity;
-    let deep = TwoPly { inner: e.clone() };
+    let deep = TwoPly::with_objective(e.clone(), side.opp(), obj.swapped());
     let (mut hi, mut lo): (Vec<ScoredMove>, Vec<ScoredMove>) = (Vec::new(), Vec::new());
     for (i, m) in ranked.into_iter().enumerate() {
         // 1·2위는 항상 2수로 본다(힌트의 "2위보다 얼마나 나은가"가 같은 깊이끼리 비교되도록).
@@ -169,7 +230,7 @@ pub fn rank_moves_ply<E: Evaluator + Clone>(
         if selected {
             let probs = evaluate_after(&deep, &m.board, side);
             hi.push(ScoredMove {
-                equity: probs.equity(),
+                equity: obj.value(&probs),
                 probs,
                 ply: 2,
                 ..m
