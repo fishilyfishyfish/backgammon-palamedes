@@ -53,14 +53,14 @@ cd engine && cargo fmt --check && cargo clippy --all-targets -- -D warnings && c
 # 성능 측정
 cd engine && cargo run --release --example bench
 
-# 강도 측정(미러 대국, 4스레드): 플레이어 random | hand | nn(포함된 가중치) | nn:<경로>
-cd engine && cargo run --release --example match -- nn hand 2500
+# 강도 측정(미러 대국, 4스레드): 플레이어 random | hand | nn(포함된 가중치) | nn:<경로>, 뒤에 @2 = 2수(@2f = 거르기 없음)
+cd engine && cargo run --release --example match -- nn@2 nn 2500
 # TD(λ) 자기대국 학습 (key=value: games, hidden, lambda, lr, lr_end, threads, eval_every, eval_pairs, out, init)
 cd engine && cargo run --release --example train -- games=2000000 lr=0.02 lr_end=0.001 out=weights/td-new.bin
 # 가중치 하나를 바꾼 손 평가 vs 기본값 (TUNE_SEED로 다른 주사위)
 cd engine && cargo run --release --example tune -- 600 hit_scale=0.8
 # 설명용 선형 대리 모델 다시 맞추기 (신경망 가중치를 바꾸면 같이) → weights/surrogate.json
-cd engine && cargo run --release --example fit_surrogate -- 2000 weights/surrogate.json
+cd engine && cargo run --release --example fit_surrogate -- 2000 weights/surrogate.json 2
 # 시작 국면 15가지 주사위의 선택과 상위 후보 (hand | nn | nn:<경로>)
 cd engine && cargo run --release --example openings -- nn
 
@@ -91,8 +91,8 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `engine/src/notation.rs` | 기보 표기(`24/18*/13`, `6/off(2)`) |
 | `engine/src/rng.rs` | 시드 고정 SplitMix64 (자기대국·미러 대국용) |
 | `engine/src/eval.rs` | `OutcomeProbs`(결과 확률·에퀴티), `Evaluator` 트레이트, 손 평가 `HandEval`/`HandWeights`, 레이스 공식 |
-| `engine/src/search.rs` | 1수 탐색 `rank_moves`/`best_move`, 웹용 `MoveSummary` |
-| `engine/src/play.rs` | `Player`(랜덤, `OnePly`), `play_game`, 미러 대국 `mirror_match`/`parallel_mirror_match`와 통계 |
+| `engine/src/search.rs` | 1수 탐색 `rank_moves`/`best_move`, 2수 평가기 `TwoPly`, 깊이 지정 `rank_moves_ply`(`Search`, `Filter`), 웹용 `MoveSummary` |
+| `engine/src/play.rs` | `Player`(랜덤, `OnePly`, 깊이 지정 `Searcher`), `play_game`, 미러 대국 `mirror_match`/`parallel_mirror_match`와 통계 |
 | `engine/src/nn.rs` | 신경망 `Net`(입력 인코딩, 희소 순전파·역전파, PNN1 저장 형식), `NnEval`(포함된 가중치) |
 | `engine/src/train.rs` | TD(λ) 자기대국: `self_play_game`(λ-리턴 표본), `train_round`(병렬 라운드) |
 | `engine/weights/` | `td.bin`(신경망 가중치), `surrogate.json`(설명용 대리 모델), `logs/`(학습 기록). 둘 다 엔진에 포함 |
@@ -220,7 +220,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 - 웹 상대 기본값은 신경망. 기준선·랜덤은 설정에서 선택. 엔진 API는 `rank_moves_json(..., engine)`(0 = 기준선, 1 = 신경망).
 
 ### 설명 층과 분석 (5단계)
-- **엔진 판단**: 신경망 1수 탐색으로 그 국면의 모든 합법수를 순위 매기고, 손실 = 최선 에퀴티 − 둔 수 에퀴티.
+- **엔진 판단**: 신경망 2수 탐색(아래 "2수 탐색")으로 그 국면의 합법수를 순위 매기고, 손실 = 최선 에퀴티 − 둔 수 에퀴티.
   등급(GNU 백개먼 기본값, bug-gnubg 2019-01 메일링 리스트로 확인): 최선(같은 결과 국면), 괜찮음(< 0.04),
   의심스러움 ?! (≥ 0.04), 나쁨 ? (≥ 0.08), 매우 나쁨 ?? (≥ 0.16). 상수는 `analysis.rs`와 `web/common.js`(BAD) 두 곳.
 - **설명(근사)**: 선형 대리 모델. 입력 19개(`explain::NAMES`)는 `Features`에서 수를 둔 쪽 기준으로 만든다
@@ -230,7 +230,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
     판 번호 % 5 == 0인 판은 검증용. 릿지(1e-3·n) + **부호 제약**(방향이 분명한 특징은 부호를 고정, 어기면 0으로 두고 다시 풂).
     부호 제약 이유: 특징끼리 얽혀서 "앵커가 적을수록 좋다"(실제로는 초반에 뒷말을 갈라 두는 효과) 같은 거꾸로 된 가중치가
     나왔고, 그대로 문장이 되면 틀린 조언처럼 읽힌다. 현재 앵커만 제약에 걸려 0.
-  - 검증 국면 R² = 0.521 (제약 없이 0.523, "맞으면 잃을 핍"·"쌓인 말" 추가 전 0.433). 화면에 R²도 같이 보여 준다.
+  - 검증 국면 R² = 0.537 (2수 에퀴티 기준. 1수 기준일 때 0.521, 제약 없이 0.523, "맞으면 잃을 핍"·"쌓인 말" 추가 전 0.433). 화면에 R²도 같이 보여 준다.
   - 기여도 = w_k × (좋은 수 x_k − 나쁜 수 x_k). 같은 내용을 두 번 말하지 않게 특징을 **주제**로 묶어(`topic_of`: 블롯,
     홈보드, 프라임, 앵커/뒷말, 히트, 핍 등) 합산하고, 기여도 > 0.004인 주제를 큰 순서로 최대 3개.
     문장은 주제 안에서 기여가 가장 큰 특징을 기준으로 고른 템플릿이고, 숫자는 전부 `Features`에서 가져온다.
@@ -254,6 +254,21 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 - 시작 수 중 기준선이 흔히 두는 수와 다르게 두는 것: 62(24/16), 43·52(13/6), 41·32(13/8), 21(13/10).
   31·42·53·61·65는 포인트 만들기/달리기로 정석과 같고, 63(24/15)·64(8/2 6/2)는 정석 후보 중 하나.
   신경망(4단계)은 이 수들을 모두 정석대로 둔다.
+
+### 2수 탐색
+- 용어: 이 프로젝트의 "1수" = 수를 둔 결과 국면만 평가(gnubg 0-ply). "2수" = 결과 국면에서 상대의 21가지 주사위마다
+  상대가 1수 기준 최선 응수를 둔다고 보고 그 결과를 주사위 확률로 평균(gnubg 1-ply).
+- 구현: `TwoPly<E>`가 `Evaluator`를 감싼 평가기라서 기존 1수 순위 매기기에 그대로 끼운다. `rank_moves_ply`는 1수로 전부
+  순위를 매긴 뒤 **상위 8개 중 최선과 0.16 이내**(+ 1·2위는 항상, + 분석할 때 둔 수는 항상)만 2수로 다시 평가해 앞에 두고,
+  나머지는 1수 값으로 뒤에 둔다(`ply` 필드로 구분). 거르기 없는 2수와 비교해 차이 없음(−0.004 ± 0.011, 2000판).
+- 강도(미러 대국): 2수 vs 1수 +0.074 ± 0.018 ppg(5000판, 53.0% 승), 2수 vs 기준선 +0.481 ± 0.018(5000판, 66.5% 승).
+- 속도: 2수 결정 네이티브 1.0 ms, WASM 4.9 ms(1수는 0.02 ms / 0.16 ms). 그래서 웹의 신경망 대국·힌트·경고·분석을 모두 2수로 바꿨다.
+  기준선 AI는 3단계 기준선 그대로 1수. 상수는 `web/common.js`의 `PLY_NN`/`PLY_BASELINE`.
+- 처음에 분석이 1수 기준이었던 건 3단계 탐색을 그대로 쓴 결과였다. 2수 비용을 손 평가 시절 기준(결정당 약 350 ms)으로
+  어림해서 미뤘는데, 신경망 기준으로 다시 재 보니 훨씬 싸서 바꿨다.
+- 대리 모델도 2수 에퀴티 차이로 다시 맞췄다(`fit_surrogate ... 2`, 1수 순위 상위 10개를 2수로 재평가). 검증 R² 0.537.
+  `Surrogate.ply`에 맞춘 깊이를 기록하고, 테스트가 웹 깊이(2)와 같은지 확인한다.
+- 신경망 학습(자기대국)은 여전히 1수로 수를 고른다(2수면 학습이 약 50배 느려짐).
 
 ## 성능 기록
 
@@ -283,16 +298,25 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | 2026-10-20 | 대리 모델 맞추기 (2000판, 4스레드) | 약 18초, 검증 R² 0.521 |
 | 2026-10-20 | WASM 크기 (5단계) | 366 KB |
 | 2026-10-20 | 테스트 `cargo test --release` (5단계) | 42개 통과, 약 6초 |
+| 2026-10-20 | 결정 시간 신경망 1수 / 2수 (네이티브) | 0.020 ms / 1.0 ms |
+| 2026-10-20 | `rank_moves_json` 신경망 1수 / 2수 (WASM) | 0.16 ms / 4.9 ms |
+| 2026-10-20 | `analyze_move_json` / `hint_json` 2수 (WASM) | 5.1 ms / 4.1 ms |
+| 2026-10-20 | 강도: 신경망 2수 vs 1수 | 5000판, 53.0% 승, +0.074 ± 0.018 ppg |
+| 2026-10-20 | 강도: 신경망 2수 vs 기준선 | 5000판, 66.5% 승, +0.481 ± 0.018 ppg |
+| 2026-10-20 | 강도: 2수 거르기 없음 vs 거르기(상위 8, 0.16) | 2000판, −0.004 ± 0.011 ppg |
+| 2026-10-20 | 대리 모델 맞추기 (2수, 2000판, 4스레드) | 90초, 검증 R² 0.537 |
+| 2026-10-20 | WASM 크기 (2수 추가) | 388 KB |
+| 2026-10-20 | 테스트 `cargo test --release` (2수 추가) | 44개 통과 |
 
 ## 현재 상태와 남은 문제
-- 1~5단계 완료. 웹 상대는 신경망(1수 탐색) 기본, 기준선·랜덤 선택 가능. 분석 화면과 친절 모드 있음.
+- 1~5단계 완료. 웹 상대는 신경망(2수 탐색) 기본, 기준선(1수)·랜덤 선택 가능. 분석 화면과 친절 모드(2수 기준) 있음.
 - 기보 표기에서 같은 말이 여러 번 움직인 경우의 묶음 표기는 단순 규칙(이어지는 걸음은 한 줄로)이다.
   표기가 여러 가지로 가능한 드문 경우(같은 칸에 둘이 도착 후 하나만 다시 이동) gnubg와 다르게 보일 수 있다.
 - UI 자동 점검(`scripts/ui-smoke.mjs`)은 CI에 넣지 않았다(로컬 Playwright 필요). 판마다 말 색·홈 위치·상대를 바꿔 가며 둔다.
 - 접근성: 판 SVG는 키보드로 말을 고를 수 없다(R/Enter/U 단축키만 있음). 5단계 전에 보완.
-- 탐색은 1수뿐이다. 신경망이 싸서(0.13 ms/결정) 2수 탐색(약 400배, WASM 약 50 ms)도 가능해 보인다. 효과는 미러 대국으로 따로 확인할 것.
+- 3수 이상 탐색은 없다. 2수가 WASM 5 ms라 3수(대략 400배)는 분석용으로만 가능해 보인다. 하려면 미러 대국으로 효과부터 확인할 것.
 - 손 평가의 접촉 국면 개먼 비율은 어림값이다. 시작 국면 개먼 비율(이길 때 약 29%)은 실제(약 27%)와 비슷하지만 국면별로 검증하지 않았다.
 - 신경망 학습은 시드 고정이지만 스레드 라운드 구성(threads, gpt)에 따라 결과가 달라진다. 재현하려면 같은 설정으로 돌릴 것.
 - 대리 모델 R²가 0.52라 설명이 차이의 절반 정도만 잡는다. 이유가 엉뚱해 보이는 수가 있으면 특징을 더하거나(예: 탈출 수, 상대 블롯 거리) 주제 묶음을 손볼 것.
-- 분석은 1수 탐색 기준이다. 등급이 gnubg(2수 이상 탐색)와 다를 수 있다.
+- 분석은 2수(gnubg 1-ply) 기준이다. gnubg 기본 분석(더 깊음)과 등급이 다를 수 있다.
 - 기보 저장소는 브라우저 localStorage(최근 20판)다. 오래 보관하려면 분석 화면에서 파일로 내보내야 한다.
