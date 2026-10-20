@@ -201,11 +201,23 @@ pub fn decide<E: crate::eval::Evaluator + Clone>(
     cube: CubeState,
     ctx: Option<crate::matchplay::MatchCtx>,
 ) -> CubeDecision {
+    decide_shifted(e, b, side, cube, ctx, 0.0)
+}
+
+/// `decide`와 같되 큐브 효율에 `x_shift`를 더한다(효율 값 비교 실험용).
+pub fn decide_shifted<E: crate::eval::Evaluator + Clone>(
+    e: &E,
+    b: &Board,
+    side: Side,
+    cube: CubeState,
+    ctx: Option<crate::matchplay::MatchCtx>,
+    x_shift: f32,
+) -> CubeDecision {
     use crate::search::{Objective, TwoPly};
     let obj = ctx.map(Objective::Match).unwrap_or(Objective::Money);
     let probs =
         crate::eval::Evaluator::evaluate(&TwoPly::with_objective(e.clone(), side, obj), b, side);
-    let x = cube_efficiency(b, side);
+    let x = (cube_efficiency(b, side) + x_shift).clamp(0.0, 1.0);
     let owner = cube.owner_for(side);
     match ctx {
         None => money_decision(&probs, owner, x),

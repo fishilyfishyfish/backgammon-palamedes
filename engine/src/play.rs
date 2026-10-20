@@ -225,7 +225,7 @@ where
 
 // ---------- 큐브가 있는 판과 매치 ----------
 
-use crate::cube::{CubeState, decide};
+use crate::cube::{CubeState, decide_shifted};
 use crate::matchplay::{MatchCtx, Phase};
 use crate::search::Objective;
 
@@ -252,6 +252,8 @@ pub struct CubeAgent<E: Evaluator + Clone> {
     pub search: Search,
     pub policy: CubePolicy,
     pub label: String,
+    /// 큐브 효율 보정(`cube::decide_shifted`). 기본 0.
+    pub x_shift: f32,
 }
 
 impl<E: Evaluator + Clone> CubeAgent<E> {
@@ -291,7 +293,15 @@ impl<E: Evaluator + Clone> CubePlayer for CubeAgent<E> {
         if self.policy == CubePolicy::Never {
             return false;
         }
-        decide(&self.eval, b, side, cube, self.ctx_for_policy(ctx)).double
+        decide_shifted(
+            &self.eval,
+            b,
+            side,
+            cube,
+            self.ctx_for_policy(ctx),
+            self.x_shift,
+        )
+        .double
     }
 
     fn take(&mut self, b: &Board, side: Side, cube: CubeState, ctx: Option<MatchCtx>) -> bool {
@@ -301,7 +311,7 @@ impl<E: Evaluator + Clone> CubePlayer for CubeAgent<E> {
         // 더블한 쪽 입장에서 판단하고, 그쪽 기준 "상대가 받아야 하는가"를 쓴다.
         let doubler = side.opp();
         let dctx = self.ctx_for_policy(ctx).map(|c| c.swapped());
-        decide(&self.eval, b, doubler, cube, dctx).take
+        decide_shifted(&self.eval, b, doubler, cube, dctx, self.x_shift).take
     }
 }
 

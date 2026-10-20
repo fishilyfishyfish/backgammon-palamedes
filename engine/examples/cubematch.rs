@@ -2,6 +2,7 @@
 //! `cargo run --release --example cubematch -- money <A> <B> [쌍 수]`
 //! `cargo run --release --example cubematch -- match <A> <B> <매치 길이> [쌍 수]`
 //! 정책: janowski(점수 반영), money(점수 무시, 머니 판단), never(더블 안 함, 항상 받음). 수는 모두 신경망 2수.
+//! 뒤에 `:<보정>`을 붙이면 큐브 효율 x에 보정을 더한다(예: janowski:+0.1).
 
 use std::time::Instant;
 
@@ -10,7 +11,12 @@ use palamedes::nn::NnEval;
 use palamedes::play::{CubeAgent, CubePolicy, play_cube_game, play_match};
 use palamedes::search::Search;
 
-fn agent(name: &str) -> CubeAgent<NnEval> {
+fn agent(spec: &str) -> CubeAgent<NnEval> {
+    // "janowski" 또는 "janowski:+0.1"(큐브 효율 보정)
+    let (name, x_shift) = match spec.split_once(':') {
+        Some((n, x)) => (n, x.parse::<f32>().expect("x shift")),
+        None => (spec, 0.0),
+    };
     let policy = match name {
         "janowski" => CubePolicy::Janowski,
         "money" => CubePolicy::MoneyOnly,
@@ -21,7 +27,8 @@ fn agent(name: &str) -> CubeAgent<NnEval> {
         eval: NnEval::embedded(),
         search: Search::TWO_PLY,
         policy,
-        label: name.into(),
+        label: spec.into(),
+        x_shift,
     }
 }
 
