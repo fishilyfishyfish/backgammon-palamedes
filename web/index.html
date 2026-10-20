@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Palamedes 백개먼</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Palamedes <span class="sub">백개먼</span></h1>
+    <div class="score" aria-label="점수">
+      <span>나 <b id="score-human">0</b></span>
+      <span class="sep">:</span>
+      <span><b id="score-ai">0</b> AI</span>
+    </div>
+    <button id="btn-new" class="btn ghost" type="button">새 게임</button>
+  </header>
+
+  <main class="app">
+    <section class="board-wrap">
+      <svg id="board" viewBox="0 0 932 706" role="img" aria-label="백개먼 판"></svg>
+    </section>
+
+    <aside class="panel">
+      <p id="status" class="status" aria-live="polite">엔진을 불러오는 중…</p>
+
+      <div class="actions">
+        <button id="btn-roll" class="btn primary" type="button" disabled>굴리기</button>
+        <button id="btn-undo" class="btn" type="button" disabled>무르기</button>
+        <button id="btn-done" class="btn primary" type="button" disabled>턴 끝내기</button>
+      </div>
+
+      <dl class="pips">
+        <div><dt><span class="chip white"></span>나 (백)</dt><dd id="pip-human">167</dd></div>
+        <div><dt><span class="chip black"></span>AI (흑)</dt><dd id="pip-ai">167</dd></div>
+      </dl>
+      <p id="pip-diff" class="hint"></p>
+
+      <h2>기보</h2>
+      <ol id="moves" class="moves"></ol>
+
+      <p class="hint foot">상대는 합법수 중 하나를 무작위로 고르는 AI야. 말을 누르면 갈 수 있는 칸이 표시돼.</p>
+    </aside>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
