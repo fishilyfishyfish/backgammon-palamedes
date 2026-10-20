@@ -61,9 +61,11 @@ cd engine && cargo run --release --example train -- games=2000000 lr=0.02 lr_end
 cd engine && cargo run --release --example tune -- 600 hit_scale=0.8
 # 설명용 선형 대리 모델 다시 맞추기 (신경망 가중치를 바꾸면 같이) → weights/surrogate.json
 cd engine && cargo run --release --example fit_surrogate -- 2000 weights/surrogate.json 2
-# 큐브 정책 비교(신경망 2수 체커 플레이): 머니 게임 / n점 매치. 정책 janowski | money | never
+# 큐브 정책 비교(신경망 2수 체커 플레이): 머니 게임 / n점 매치. 정책 janowski | money | never, 뒤에 :<보정>이면 큐브 효율 x에 더함
 cd engine && cargo run --release --example cubematch -- money janowski never 2000
 cd engine && cargo run --release --example cubematch -- match janowski money 7 300
+# 신경망 보정 검사: 자기대국 국면 400개의 1수 예측 vs 롤아웃 1296회
+cd engine && cargo run --release --example calibrate -- 400 1296
 # 계산한 매치 에퀴티 표 출력
 cd engine && cargo run --release --example met -- 9
 # 시작 국면 15가지 주사위의 선택과 상위 후보 (hand | nn | nn:<경로>)
@@ -101,7 +103,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `engine/src/nn.rs` | 신경망 `Net`(입력 인코딩, 희소 순전파·역전파, PNN1 저장 형식), `NnEval`(포함된 가중치) |
 | `engine/src/train.rs` | TD(λ) 자기대국: `self_play_game`(λ-리턴 표본), `train_round`(병렬 라운드) |
 | `engine/weights/` | `td.bin`(신경망 가중치), `surrogate.json`(설명용 대리 모델), `logs/`(학습 기록). 둘 다 엔진에 포함 |
-| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인), `fit_surrogate`, `cubematch`(큐브 정책), `met`(MET 출력) |
+| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인), `fit_surrogate`, `cubematch`(큐브 정책), `met`(MET 출력), `calibrate`(신경망 보정 검사) |
 | `engine/src/analysis.rs` | 실수 등급 `Grade`(gnubg 기본 임계값), `analyze_move`, `hint` |
 | `engine/src/explain.rs` | 설명 층: 대리 모델 입력 `surrogate_inputs`, `Surrogate`(포함된 가중치), 주제별 기여도 `explain`, 템플릿 문장 |
 | `engine/src/cube.rs` | 큐브: Janowski 큐브 에퀴티, 머니 판단 `money_decision`, 국면 → 판단 `decide`, 근거 문장 `cube_reasons`, `CubeState` |
@@ -286,7 +288,10 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 ### 더블링 큐브 · 매치 · 롤아웃 (6단계)
 - **큐브 판단(머니)**: 굴리기 전 국면을 2수(이번 굴림 21가지마다 최선 수)로 평가한 큐브 없는 확률에 Janowski 모델을 씌운다.
   E = x·E_live + (1−x)·E_dead. 승패 평균 크기 W, L(개먼 포함)로 TP = (L−½)/(W+L+½), CP = (L+1)/(W+L+½).
-  큐브 효율 x: 접촉 0.68, 레이스 0.6 + 0.001×핍(최대 0.75). **x는 문헌의 흔한 값을 어림으로 쓴 것이고 롤아웃으로 맞추지 않았다.**
+  큐브 효율 x: 접촉 0.68, 레이스 0.6 + 0.001×핍(최대 0.75). x는 문헌의 흔한 값을 어림으로 쓴 것이고 롤아웃으로 맞추지 않았다.
+  대신 x에 보정을 더한 정책과 미러 대국으로 비교했다(`cubematch -- money janowski:+0.08 janowski 8000`):
+  머니(각 16000판) −0.15: −0.016 ± 0.011, −0.08: +0.003 ± 0.009, +0.08: −0.017 ± 0.007, +0.15: −0.045 ± 0.010 ppg.
+  7점 매치(각 2000매치) −0.1: 49.5% ± 0.7%, +0.1: 50.1% ± 0.8%. 올리면 손해, 내리면 차이 없음이라 그대로 둔다.
   판단: 노 더블 vs min(더블/테이크 = 2·E(상대 소유), 더블/패스 = 1). 더블이 낫고 상대가 패스해야 하는데 노 더블이 더 크면
   "너무 좋음(개먼 노림)". 근거 문장(`cube_reasons`)은 승률·테이크 포인트·세 에퀴티 값을 그대로 넣는다(화면 꼬리표: "근거(큐브 모델 근사)").
 - **MET**: 공개 표(Kazaross-XG2)는 이 환경에서 bkgm.com 접속이 막혀 못 받았다. 그래서 `matchplay.rs`에서 계산한다:
@@ -357,6 +362,9 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | 2026-10-20 | 강도: 머니 큐브 Janowski vs 더블 안 함 | 4000판, +0.400 ± 0.009 ppg |
 | 2026-10-20 | 강도: 7점 매치 점수 반영 vs 점수 무시 큐브 | 600매치, 55.5% ± 1.7% |
 | 2026-10-20 | 강도: 7점 매치 점수 반영 vs 큐브 안 씀 | 600매치, 62.5% ± 1.6% |
+| 2026-10-20 | 큐브 효율 x +0.08 / +0.15 vs 기본 (머니) | 각 16000판, −0.017 ± 0.007 / −0.045 ± 0.010 ppg |
+| 2026-10-20 | 큐브 효율 x −0.08 / −0.15 vs 기본 (머니) | 각 16000판, +0.003 ± 0.009 / −0.016 ± 0.011 ppg |
+| 2026-10-20 | 큐브 효율 x ±0.1 vs 기본 (7점 매치) | 각 2000매치, 49.5% ± 0.7% / 50.1% ± 0.8% |
 | 2026-10-20 | WASM 크기 (6단계) | 452 KB |
 | 2026-10-20 | 테스트 `cargo test --release` (6단계) | 54개 통과 |
 
@@ -371,7 +379,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 - 대리 모델 R²가 0.55라 설명이 차이의 절반 정도만 잡는다. 이유가 엉뚱해 보이는 수가 있으면 특징을 더하거나(예: 탈출 수, 상대 블롯 거리) 주제 묶음을 손볼 것.
 - 분석은 2수(gnubg 1-ply) 기준이다. gnubg 기본 분석(더 깊음)과 등급이 다를 수 있다.
 - 기보 저장소는 브라우저 localStorage(최근 20판)다. 오래 보관하려면 분석 화면에서 파일로 내보내야 한다.
-- MET는 모델로 계산한 값이다(공개 표 대신). 큐브 효율 x도 어림값이다. 둘 다 롤아웃이나 공개 표로 검증·교체할 여지가 있다.
+- MET는 모델로 계산한 값이다(공개 표 대신). 큐브 효율 x는 어림값이지만 ±0.15 범위에서 미러 대국으로 더 나은 값을 못 찾았다. MET는 공개 표로 검증·교체할 여지가 있다.
 - 체커 플레이의 매치 목표는 죽은 큐브 MWC다(큐브 소유에 따른 수 선택 차이는 반영 안 함). 머니 게임 체커 플레이는 큐브 없는 에퀴티다.
 - 롤아웃은 큐브 없는 머니 기준만 있다(큐브·매치 롤아웃 없음). 웹 롤아웃 표준오차가 ±0.08 정도로 커서 가까운 후보는 가려내지 못한다.
 - 신경망 학습은 큐브 없이 했다. 큐브가 있는 판의 국면 분포는 학습 분포와 다를 수 있다.
