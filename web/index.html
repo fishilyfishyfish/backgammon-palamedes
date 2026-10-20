@@ -52,9 +52,14 @@
           <button type="button" class="seg-btn" data-view="home:right">오른쪽</button>
           <button type="button" class="seg-btn" data-view="home:left">왼쪽</button>
         </div>
+        <div class="seg" role="group" aria-label="상대">
+          <span class="seg-label">상대</span>
+          <button type="button" class="seg-btn" data-view="ai:baseline">기준선</button>
+          <button type="button" class="seg-btn" data-view="ai:random">랜덤</button>
+        </div>
       </div>
 
-      <p class="hint foot">상대는 합법수 중 하나를 무작위로 고르는 AI야. 말을 누르면 갈 수 있는 칸이 표시돼.</p>
+      <p class="hint foot">기준선 AI는 손으로 짠 평가함수로 모든 합법수를 평가해서 가장 좋은 수를 둬(1수 탐색). 말을 누르면 갈 수 있는 칸이 표시돼.</p>
     </aside>
   </main>
 

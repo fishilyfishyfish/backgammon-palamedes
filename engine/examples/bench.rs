@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use palamedes::board::{Board, Side};
 use palamedes::rng::Rng;
-use palamedes::{compute_features, legal_moves};
+use palamedes::{Evaluator, HandEval, best_move, compute_features, legal_moves};
 
 fn main() {
     let mut rng = Rng::new(7);
@@ -45,5 +45,27 @@ fn main() {
     println!(
         "compute_features: {n} positions in {dt:.3}s = {:.0} pos/s",
         n as f64 / dt
+    );
+
+    let e = HandEval::default();
+    let t = Instant::now();
+    for (b, s, ..) in positions.iter().take(n) {
+        std::hint::black_box(e.evaluate(b, *s));
+    }
+    let dt = t.elapsed().as_secs_f64();
+    println!(
+        "HandEval::evaluate: {n} positions in {dt:.3}s = {:.0} pos/s",
+        n as f64 / dt
+    );
+
+    let n = 1_000;
+    let t = Instant::now();
+    for (b, s, d1, d2) in positions.iter().take(n) {
+        std::hint::black_box(best_move(&e, b, *s, *d1, *d2));
+    }
+    let dt = t.elapsed().as_secs_f64();
+    println!(
+        "best_move (1-ply, HandEval): {n} decisions in {dt:.3}s = {:.2} ms/decision",
+        1000.0 * dt / n as f64
     );
 }

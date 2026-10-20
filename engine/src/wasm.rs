@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use crate::board::{Board, Side, Step};
-use crate::features::compute_features;
+use crate::eval::HandEval;
+use crate::features::compute_features_with_eval;
 use crate::movegen::{legal_moves_with_boards, next_steps, turn_options};
 use crate::notation::format_move;
+use crate::search::{MoveSummary, rank_moves};
 
 #[derive(Deserialize)]
 struct StepIn {
@@ -129,10 +131,27 @@ pub fn turn_state_json(
     }))
 }
 
-/// 양쪽 특징값.
+/// 양쪽 특징값 + 기준선 평가기의 결과 확률(White 기준). `on_roll`은 이제 굴릴 차례.
 #[wasm_bindgen]
-pub fn features_json(board: &[u8]) -> Result<String, JsError> {
-    Ok(to_json(&compute_features(&board_arg(board)?)))
+pub fn features_json(board: &[u8], on_roll: u8) -> Result<String, JsError> {
+    let (b, s) = (board_arg(board)?, side_arg(on_roll)?);
+    Ok(to_json(&compute_features_with_eval(
+        &b,
+        s,
+        &HandEval::default(),
+    )))
+}
+
+/// 기준선(손 평가 + 1수 탐색)으로 모든 합법수를 에퀴티 내림차순으로.
+/// `[{"steps":[...],"notation":"...","board":[52],"probs":{...},"equity":0.12}]` (수를 둔 쪽 기준).
+#[wasm_bindgen]
+pub fn rank_moves_json(board: &[u8], side: u8, d1: u8, d2: u8) -> Result<String, JsError> {
+    let (b, s) = (board_arg(board)?, side_arg(side)?);
+    dice_arg(d1, d2)?;
+    let ranked = rank_moves(&HandEval::default(), &b, s, d1, d2);
+    Ok(to_json(
+        &ranked.iter().map(MoveSummary::from).collect::<Vec<_>>(),
+    ))
 }
 
 /// 종국 판정. 진행 중이면 `null`, 끝났으면 `{"winner":0,"points":2}`.

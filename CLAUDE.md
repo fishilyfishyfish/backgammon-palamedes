@@ -32,7 +32,7 @@
 ### 단계
 1. 규칙, 합법수 생성, 특징값 계산, 테스트 — **완료**
 2. 웹 UI(사람 vs 랜덤 AI), Pages 배포 — **완료**
-3. 손으로 짠 평가함수 + 1수 탐색. 이후 엔진의 기준선.
+3. 손으로 짠 평가함수 + 1수 탐색. 이후 엔진의 기준선. — **완료**
 4. TD(λ) 자기대국 신경망. 출력은 승리·개먼·백개먼 확률. 같은 주사위 시드로 자리를 바꾸는
    미러 대국 수천 판으로 기준선 대비 강도 측정.
 5. 설명 층과 분석 페이지(기보 복기, 수마다 실수 등급과 설명),
@@ -52,6 +52,13 @@ cd engine && cargo fmt --check && cargo clippy --all-targets -- -D warnings && c
 
 # 성능 측정
 cd engine && cargo run --release --example bench
+
+# 강도 측정(미러 대국): 플레이어 random | hand
+cd engine && cargo run --release --example match -- hand random 500
+# 가중치 하나를 바꾼 손 평가 vs 기본값 (TUNE_SEED로 다른 주사위)
+cd engine && cargo run --release --example tune -- 600 hit_scale=0.8
+# 시작 국면 15가지 주사위의 선택과 상위 후보
+cd engine && cargo run --release --example openings
 
 # WASM 빌드 → web/pkg (gitignore 대상, CI에서 빌드)
 rustup target add wasm32-unknown-unknown
@@ -77,8 +84,12 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `engine/src/features.rs` | 설명용 특징값 `compute_features`, 샷 표 `shot_table` |
 | `engine/src/notation.rs` | 기보 표기(`24/18*/13`, `6/off(2)`) |
 | `engine/src/rng.rs` | 시드 고정 SplitMix64 (자기대국·미러 대국용) |
+| `engine/src/eval.rs` | `OutcomeProbs`(결과 확률·에퀴티), `Evaluator` 트레이트, 손 평가 `HandEval`/`HandWeights`, 레이스 공식 |
+| `engine/src/search.rs` | 1수 탐색 `rank_moves`/`best_move`, 웹용 `MoveSummary` |
+| `engine/src/play.rs` | `Player`(랜덤, `OnePly`), `play_game`, 미러 대국 `mirror_match`와 통계 |
+| `engine/examples/` | `bench`(성능), `match`(강도), `tune`(가중치 비교), `openings`(시작 수 확인) |
 | `engine/src/wasm.rs` | 웹 바인딩. 상태 없음: 52칸 판 배열 + JSON |
-| `engine/tests/` | 규칙(`rules.rs`), 특징값(`features.rs`), 무작위 자기대국 불변식(`selfplay.rs`) |
+| `engine/tests/` | 규칙(`rules.rs`), 특징값(`features.rs`), 무작위 자기대국 불변식(`selfplay.rs`), 평가·탐색(`eval.rs`) |
 | `web/app.js` | 대국 상태 기계, SVG 판 렌더링, 입력 처리 |
 | `web/engine-worker.js` | WASM을 올린 module worker, `{id, fn, args}` RPC |
 | `scripts/build-wasm.sh`, `scripts/ui-smoke.mjs` | WASM 빌드, UI 자동 점검 |
@@ -118,7 +129,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
     문장의 "6칸 거리"는 이 값에서 만든다.
 - 앵커 = 상대 홈보드(자기 기준 19..=24)에 만든 포인트. 뒤에 남은 말 = 19..=24의 말(바 제외, 바는 따로).
 - 프라임 = 1..=24에서 연속으로 만든 포인트의 최장 길이와 범위.
-- 승리·개먼 확률(`Features.outcome`)은 평가기가 생기는 3·4단계까지 `None`. 근거 없는 값을 채우지 않는다.
+- 승리·개먼 확률(`Features.outcome`)은 `compute_features_with_eval`로 평가기를 거칠 때만 채운다(White 기준). `compute_features`만 부르면 `None`.
 
 ### 웹
 - 엔진 API는 **상태 없음**: 판(52칸 배열: 백 0..26, 흑 26..52)과 JSON 문자열만 주고받는다. 대국 상태는 `app.js`가
@@ -141,10 +152,38 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 - 출발점이 하나뿐이면 그 말을 미리 선택해 둔다.
 - `?fast` 쿼리는 AI 연출 지연을 없앤다(자동 점검용). `window.__palamedes.state`는 점검 스크립트용 읽기 핸들.
 
+### 평가와 탐색 (3단계)
+- 확률 관례는 GNU 백개먼과 같다: `win`, `win_gammon`(백개먼 포함), `win_backgammon`, `lose_gammon`, `lose_backgammon`.
+  에퀴티 = 2·win − 1 + wg − lg + wbg − lbg (큐브 없는 머니).
+- `Evaluator::evaluate(board, on_roll)`은 **이제 굴릴 쪽 기준**이다. 1수 탐색은 수를 둔 결과를 상대 차례로 평가하고 `invert()`한다.
+  4단계 신경망도 같은 트레이트로 끼운다.
+- `HandEval` 구조:
+  - 종국이면 확정값. 접촉이 끝났으면(`is_race`) **레이스 공식**: 다 빼는 데 필요한 굴림 수
+    T = max((핍 + 0.6×남은 말)/8.17, 남은 말/2.33), 분산 = 핍×18.6/8.17³. 둘 차례가 먼저 굴리므로 T_me ≤ T_opp면 승 →
+    P = Φ((T_opp − T_me + 0.5)/σ). 개먼은 "말 하나라도 빼는 데 필요한 굴림 수"와 비교해 같은 식으로.
+  - 접촉 국면: **위치 점수를 핍으로 환산**해서 유효 핍 = 핍 − 위치 점수, P(win) = Φ((상대 유효 핍 − 내 유효 핍 + 4)/σ),
+    σ = 3.0×√(양쪽 핍 합). 위치 점수(`HandTerms`): 만든 포인트(포인트별 가치, 1..=9는 상대 뒷말이 없으면 35%로 줄임),
+    상대 말을 가둔 프라임 길이 보너스, 블롯, 바에 있는 말(상대 홈보드 포인트 수에 따라 벌점 급증), 한 포인트 4개 이상 쌓기 벌점.
+  - 블롯은 **지금 상대 주사위에 노출된 쪽**(굴릴 차례가 아닌 쪽)만 정확한 샷 표로 본다: 위험 = P(하나라도 맞음)
+    × 맞는 블롯들의 평균 손실(25 − p 핍) × (1 + 0.15×상대 홈보드 포인트). 굴릴 차례 쪽 블롯은 곧 고칠 수 있으니 하나당 0.8핍만.
+  - 접촉 국면 개먼 비율은 진 쪽이 홈 밖에 남긴 핍, 이긴 쪽 홈보드 포인트, 바의 말로 어림한다(진 쪽이 하나라도 뺐으면 0).
+  - 특징값 모듈(`Features`)과는 따로 계산한다. 이유: 평가 쪽은 상대 노출 블롯만 샷 표가 필요해서(국면당 수 생성 21회),
+    양쪽을 다 계산하는 `compute_features`를 쓰면 두 배 느리다. 5단계 대리 모델은 `HandTerms`와 `Features` 둘 다 쓸 수 있다.
+- 가중치는 직관으로 정한 뒤 `tune` 예제로 한 번에 하나씩 바꿔 미러 대국(600쌍)으로 비교했다. 채택한 변경:
+  `hit_tempo` 5 → 0, `contact_sigma` 2.1 → 3.0 (맞을 위험을 과대평가하고 확률이 너무 극단적이었다).
+  다른 시드(1500쌍)로 검증: 조정 후가 조정 전보다 +0.108 ± 0.018 ppg. 그 뒤 단일 변경은 모두 ±1σ 안이라 멈췄다.
+- 미러 대국: 쌍 i는 시드 seed0 + i의 주사위 열을 공유하고 A와 B가 자리만 바꾼다(첫 수 결정 주사위도 같은 열).
+  ppg 표준오차는 쌍 점수를 독립 표본으로 계산한다. 랜덤 플레이어는 주사위와 다른 난수열을 쓴다.
+- 핍만 보는 1수 탐색은 랜덤에게도 진다(13.8% 승). 접촉 국면에서 핍만으로는 수를 구분할 수 없어서라 비교 기준에서 뺐다.
+- 웹 상대 기본값은 기준선(`rank_moves_json`의 1위 수). 설정에서 랜덤으로 바꿀 수 있다.
+
 ### 다음 단계 참고
 - 실수 등급 임계값(GNU 백개먼 기본값, 에퀴티 손실 기준): 의심스러움(doubtful) 0.04, 나쁨(bad) 0.08,
   매우 나쁨(very bad) 0.16. 5단계에서 실제 gnubg 소스로 다시 확인하고 적용.
-- 3단계 평가함수는 `Features`를 입력으로 쓰고, `outcome`을 채운다.
+- 4단계 강도 측정 기준선: `OnePly<HandEval>` (`examples/match.rs`의 `hand`). 기준선 vs 랜덤 = +2.62 ppg.
+- 시작 수 중 기준선이 흔히 두는 수와 다르게 두는 것: 62(24/16), 43·52(13/6), 41·32(13/8), 21(13/10).
+  31·42·53·61·65는 포인트 만들기/달리기로 정석과 같고, 63(24/15)·64(8/2 6/2)는 정석 후보 중 하나.
+  손 평가의 한계로 두고 4단계 신경망과 비교할 때 참고.
 
 ## 성능 기록
 
@@ -156,10 +195,19 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | 2026-10-20 | `compute_features`(양쪽 샷 표 포함) | 약 7,900 국면/초 |
 | 2026-10-20 | WASM 크기 (`palamedes_bg.wasm`, release, LTO) | 183 KB |
 | 2026-10-20 | 테스트 `cargo test --release` | 23개 통과, 약 2초 |
+| 2026-10-20 | `HandEval::evaluate` | 약 19,700 국면/초 |
+| 2026-10-20 | `best_move` (1수 탐색, HandEval) | 0.87 ms/결정 (네이티브), 0.66 ms/결정 (WASM, Node, 자기대국 국면, JSON 포함) |
+| 2026-10-20 | 미러 대국 속도 (hand vs hand) | 약 16~20 ms/판 |
+| 2026-10-20 | 강도: hand vs random | 1000판, 99.9% 승, +2.617 ± 0.018 ppg |
+| 2026-10-20 | 강도: 조정 후 hand vs 조정 전 | 3000판, +0.108 ± 0.018 ppg |
+| 2026-10-20 | WASM 크기 (3단계) | 208 KB |
+| 2026-10-20 | 테스트 `cargo test --release` (3단계) | 31개 통과, 약 6초 |
 
 ## 현재 상태와 남은 문제
-- 1·2단계 완료. 상대는 합법수 중 무작위.
+- 1·2·3단계 완료. 웹 상대는 기준선(손 평가 + 1수 탐색), 설정에서 랜덤 선택 가능.
 - 기보 표기에서 같은 말이 여러 번 움직인 경우의 묶음 표기는 단순 규칙(이어지는 걸음은 한 줄로)이다.
   표기가 여러 가지로 가능한 드문 경우(같은 칸에 둘이 도착 후 하나만 다시 이동) gnubg와 다르게 보일 수 있다.
-- UI 자동 점검(`scripts/ui-smoke.mjs`)은 CI에 넣지 않았다(로컬 Playwright 필요). 판마다 말 색·홈 위치를 바꿔 가며 둔다.
+- UI 자동 점검(`scripts/ui-smoke.mjs`)은 CI에 넣지 않았다(로컬 Playwright 필요). 판마다 말 색·홈 위치·상대를 바꿔 가며 둔다.
 - 접근성: 판 SVG는 키보드로 말을 고를 수 없다(R/Enter/U 단축키만 있음). 5단계 전에 보완.
+- 기준선은 1수 탐색이라 상대 응수를 보지 않는다. 2수 탐색은 비용(약 21×20배) 대비 효과를 4단계에서 신경망과 같이 판단.
+- 손 평가의 접촉 국면 개먼 비율은 어림값이다. 시작 국면 개먼 비율(이길 때 약 29%)은 실제(약 27%)와 비슷하지만 국면별로 검증하지 않았다.

@@ -95,6 +95,13 @@ impl Board {
         v
     }
 
+    /// 백과 흑을 맞바꾼 판(각 진영 기준 좌표라 배열만 바꾸면 된다).
+    pub fn swapped(&self) -> Board {
+        Board {
+            pos: [self.pos[1], self.pos[0]],
+        }
+    }
+
     /// 각 진영 15개, 한 포인트에 두 진영이 같이 있지 않음.
     pub fn is_valid(&self) -> bool {
         for s in 0..2 {

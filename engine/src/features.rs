@@ -42,22 +42,30 @@ pub struct SideFeatures {
     pub off: u8,
 }
 
-/// 승리·개먼 확률. 평가함수(3단계)·신경망(4단계)이 생기면 채운다.
-#[derive(Clone, Debug, Serialize, PartialEq)]
-pub struct OutcomeProbs {
-    pub win: f32,
-    pub win_gammon: f32,
-    pub win_backgammon: f32,
-    pub lose_gammon: f32,
-    pub lose_backgammon: f32,
-}
+pub use crate::eval::OutcomeProbs;
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Features {
     /// [White, Black].
     pub sides: [SideFeatures; 2],
-    /// White 쪽에서 본 결과 확률. 아직 평가기가 없으면 None.
+    /// White 쪽에서 본 결과 확률. 평가기를 거치지 않았으면 None(`compute_features_with_eval`).
     pub outcome: Option<OutcomeProbs>,
+}
+
+/// 특징값 + 평가기의 결과 확률(White 기준). `on_roll`은 이제 굴릴 차례인 쪽.
+pub fn compute_features_with_eval<E: crate::eval::Evaluator + ?Sized>(
+    board: &Board,
+    on_roll: Side,
+    eval: &E,
+) -> Features {
+    let mut f = compute_features(board);
+    let p = eval.evaluate(board, on_roll);
+    f.outcome = Some(if on_roll == Side::White {
+        p
+    } else {
+        p.invert()
+    });
+    f
 }
 
 pub fn compute_features(board: &Board) -> Features {
