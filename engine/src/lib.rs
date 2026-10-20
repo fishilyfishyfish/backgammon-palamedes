@@ -3,8 +3,10 @@
 //! 좌표계: 각 진영은 자기 기준 포인트 번호를 쓴다. 1 = 자기 홈의 가장 안쪽, 24 = 상대 홈의 가장 안쪽.
 //! 인덱스 0 = 베어오프된 말, 25 = 바. 상대 말이 내 포인트 p에 있으면 상대 기준으로는 25 - p.
 
+pub mod analysis;
 pub mod board;
 pub mod eval;
+pub mod explain;
 pub mod features;
 pub mod movegen;
 pub mod nn;

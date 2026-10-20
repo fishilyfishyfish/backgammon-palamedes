@@ -40,6 +40,8 @@ pub struct SideFeatures {
     pub back_checkers: u8,
     pub on_bar: u8,
     pub off: u8,
+    /// 포인트 1..=24의 말 수(인덱스 0 = 포인트 1).
+    pub point_counts: Vec<u8>,
 }
 
 pub use crate::eval::OutcomeProbs;
@@ -173,5 +175,6 @@ fn side_features(board: &Board, side: Side, shots: &ShotTable) -> SideFeatures {
         back_checkers: me[19..=24].iter().sum(),
         on_bar: me[BAR],
         off: me[0],
+        point_counts: me[1..=24].to_vec(),
     }
 }

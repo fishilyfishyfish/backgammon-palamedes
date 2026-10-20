@@ -7,7 +7,9 @@ use wasm_bindgen::prelude::*;
 use crate::board::{Board, Side, Step};
 use std::sync::OnceLock;
 
+use crate::analysis::{analyze_move, hint};
 use crate::eval::{Evaluator, HandEval};
+use crate::explain::Surrogate;
 use crate::features::compute_features_with_eval;
 use crate::movegen::{legal_moves_with_boards, next_steps, turn_options};
 use crate::nn::NnEval;
@@ -172,6 +174,46 @@ pub fn rank_moves_json(
     Ok(to_json(
         &ranked.iter().map(MoveSummary::from).collect::<Vec<_>>(),
     ))
+}
+
+/// 둔 수 분석: 실수 등급, 손실, 순위, 상위 후보, 설명(근사). `after`는 둔 수의 결과 국면.
+#[wasm_bindgen]
+pub fn analyze_move_json(
+    before: &[u8],
+    side: u8,
+    d1: u8,
+    d2: u8,
+    after: &[u8],
+    engine: u8,
+) -> Result<String, JsError> {
+    let (b, s, a) = (board_arg(before)?, side_arg(side)?, board_arg(after)?);
+    dice_arg(d1, d2)?;
+    let r = analyze_move(
+        engine_arg(engine)?,
+        Surrogate::embedded(),
+        &b,
+        s,
+        d1,
+        d2,
+        &a,
+    )
+    .ok_or_else(|| JsError::new("after is not a legal result"))?;
+    Ok(to_json(&r))
+}
+
+/// 힌트: 추천 수, 상위 후보, 2위보다 나은 이유(근사).
+#[wasm_bindgen]
+pub fn hint_json(before: &[u8], side: u8, d1: u8, d2: u8, engine: u8) -> Result<String, JsError> {
+    let (b, s) = (board_arg(before)?, side_arg(side)?);
+    dice_arg(d1, d2)?;
+    Ok(to_json(&hint(
+        engine_arg(engine)?,
+        Surrogate::embedded(),
+        &b,
+        s,
+        d1,
+        d2,
+    )))
 }
 
 /// 종국 판정. 진행 중이면 `null`, 끝났으면 `{"winner":0,"points":2}`.
