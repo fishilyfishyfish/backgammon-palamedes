@@ -61,6 +61,23 @@ jobs:
       - name: Build WASM
         run: ./scripts/build-wasm.sh
 
+      # UI 자동 점검: Chromium으로 3판(3점 매치 포함)을 끝까지 두고 분석·내보내기·롤아웃까지 확인한다.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-1.56.1
+
+      - name: UI smoke test
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node scripts/ui-smoke.mjs 3
+          rm -rf node_modules
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web

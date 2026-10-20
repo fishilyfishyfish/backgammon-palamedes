@@ -84,7 +84,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 - wasm-bindgen 크레이트 버전을 올리면 wasm-bindgen-cli도 같은 버전으로 맞춘다. CI는 Cargo.lock에서 읽어서 설치한다.
 - Rust 버전은 루트 `rust-toolchain.toml`(1.97.0)로 고정. 이유: CI가 새 stable을 받아 새 clippy 규칙(`chunks_exact_to_as_chunks`)으로
   4~5단계 커밋 네 번이 CI에서 깨졌다(로컬은 통과). 올릴 때는 로컬에서 fmt·clippy·test를 다시 통과시킨 뒤 같이 바꾼다.
-- 배포: `.github/workflows/pages.yml`. main 푸시 시 fmt/clippy/test → WASM 빌드 → `web/`을 Pages에 올린다.
+- 배포: `.github/workflows/pages.yml`. main 푸시 시 fmt/clippy/test → WASM 빌드 → UI 자동 점검(3판) → `web/`을 Pages에 올린다.
 
 ## 코드 지도
 
@@ -364,7 +364,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 - 1~6단계 완료. 웹 상대는 신경망(2수 탐색) 기본, 기준선(1수)·랜덤 선택 가능. 큐브, 머니/매치, 분석(수·큐브 등급, 롤아웃), 친절 모드.
 - 기보 표기에서 같은 말이 여러 번 움직인 경우의 묶음 표기는 단순 규칙(이어지는 걸음은 한 줄로)이다.
   표기가 여러 가지로 가능한 드문 경우(같은 칸에 둘이 도착 후 하나만 다시 이동) gnubg와 다르게 보일 수 있다.
-- UI 자동 점검(`scripts/ui-smoke.mjs`)은 CI에 넣지 않았다(로컬 Playwright 필요). 판마다 말 색·홈 위치·상대를 바꿔 가며 둔다.
+- UI 자동 점검(`scripts/ui-smoke.mjs`)은 CI에서 WASM 빌드 뒤 3판으로 돈다(Playwright 1.56.1, 브라우저 캐시). 판마다 말 색·홈 위치·상대를 바꿔 가며 두고, 수의 약 1/4은 키보드로 둔다. 무작위로 두므로 실패하면 로그의 수·국면으로 재현할 것.
 - 3수 이상 탐색은 없다. 2수가 WASM 5 ms라 3수(대략 400배)는 분석용으로만 가능해 보인다. 하려면 미러 대국으로 효과부터 확인할 것.
 - 손 평가의 접촉 국면 개먼 비율은 어림값이다. 시작 국면 개먼 비율(이길 때 약 29%)은 실제(약 27%)와 비슷하지만 국면별로 검증하지 않았다.
 - 신경망 학습은 시드 고정이지만 스레드 라운드 구성(threads, gpt)에 따라 결과가 달라진다. 재현하려면 같은 설정으로 돌릴 것.
