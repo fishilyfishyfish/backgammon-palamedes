@@ -68,6 +68,7 @@ const els = {
   chipH: $('chip-human'), chipA: $('chip-ai'), nameH: $('name-human'), nameA: $('name-ai'),
   viewButtons: document.querySelectorAll('[data-view]'),
 };
+let movesHtml = '';
 function setStatus(t) { els.status.textContent = t; }
 const coachOn = () => S.view.coach === 'on';
 const other = (side) => 1 - side;
@@ -278,8 +279,13 @@ function renderPanel() {
     pendingCube[h.side] = '';
   }
   const cell = (c) => (c ? `<span>${c.html}</span>` : '<span class="empty">—</span>');
-  els.moves.innerHTML = rows.map((r) => `<li><div class="mv">${cell(r[HUMAN])}${cell(r[AI])}</div></li>`).join('');
-  els.moves.scrollTop = els.moves.scrollHeight;
+  // 기보가 바뀔 때만 다시 그리고 맨 아래로 내린다. 매 render마다 내리면 위로 올려 보던 스크롤이 튕긴다.
+  const html = rows.map((r) => `<li><div class="mv">${cell(r[HUMAN])}${cell(r[AI])}</div></li>`).join('');
+  if (movesHtml !== html) {
+    movesHtml = html;
+    els.moves.innerHTML = html;
+    els.moves.scrollTop = els.moves.scrollHeight;
+  }
   renderCoach();
 }
 
