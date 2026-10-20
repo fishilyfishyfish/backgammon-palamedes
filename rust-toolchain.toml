@@ -1,0 +1,6 @@
+# 로컬과 CI가 같은 컴파일러·clippy를 쓰도록 고정한다(새 stable의 clippy 규칙이 CI만 깨뜨린 적이 있음).
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

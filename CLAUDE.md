@@ -77,6 +77,8 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 ```
 
 - wasm-bindgen 크레이트 버전을 올리면 wasm-bindgen-cli도 같은 버전으로 맞춘다. CI는 Cargo.lock에서 읽어서 설치한다.
+- Rust 버전은 루트 `rust-toolchain.toml`(1.97.0)로 고정. 이유: CI가 새 stable을 받아 새 clippy 규칙(`chunks_exact_to_as_chunks`)으로
+  4~5단계 커밋 네 번이 CI에서 깨졌다(로컬은 통과). 올릴 때는 로컬에서 fmt·clippy·test를 다시 통과시킨 뒤 같이 바꾼다.
 - 배포: `.github/workflows/pages.yml`. main 푸시 시 fmt/clippy/test → WASM 빌드 → `web/`을 Pages에 올린다.
 
 ## 코드 지도
