@@ -91,6 +91,62 @@ fn solve(mut a: Vec<[f64; K]>, mut b: [f64; K]) -> [f64; K] {
     w
 }
 
+/// 방향이 분명한 특징의 부호 제약: +1 = 가중치 ≥ 0, −1 = ≤ 0, 0 = 제약 없음. 순서는 `NAMES`.
+/// 이유: 특징끼리 얽혀 있으면 최소제곱이 "앵커가 적을수록 좋다" 같은 거꾸로 된 가중치를 내고,
+/// 그대로 문장이 되면 틀린 조언처럼 읽힌다.
+const SIGNS: [i8; K] = [
+    1,  // pip_lead
+    -1, // my_shots
+    0,  // my_blots
+    1,  // five_point
+    1,  // bar_point
+    1,  // home_points
+    1,  // prime_len
+    1,  // anchors
+    -1, // back_checkers
+    1,  // opp_on_bar
+    0,  // opp_shots
+    0,  // opp_home_points
+    0,  // opp_prime_len
+    1,  // my_off
+    0,  // opp_off
+    0,  // my_on_bar
+    1,  // race_pip_lead
+    -1, // my_hit_loss
+    -1, // my_stacks
+];
+
+/// 부호 제약 최소제곱(활성 집합): 풀고, 제약을 가장 크게 어긴 가중치를 0으로 고정하고 다시 푼다.
+fn solve_signed(ata: &[[f64; K]], atb: &[f64; K]) -> [f64; K] {
+    let mut fixed = [false; K];
+    loop {
+        let mut a = ata.to_vec();
+        let mut b = *atb;
+        for i in (0..K).filter(|&i| fixed[i]) {
+            for j in 0..K {
+                a[i][j] = 0.0;
+                a[j][i] = 0.0;
+            }
+            a[i][i] = 1.0;
+            b[i] = 0.0;
+        }
+        let w = solve(a, b);
+        let worst = (0..K)
+            .filter(|&i| !fixed[i] && SIGNS[i] != 0 && w[i] * (SIGNS[i] as f64) < 0.0)
+            .max_by(|&i, &j| w[i].abs().total_cmp(&w[j].abs()));
+        match worst {
+            Some(i) => {
+                println!(
+                    "sign constraint: {} would be {:+.4}, fixed to 0",
+                    NAMES[i], w[i]
+                );
+                fixed[i] = true;
+            }
+            None => return w,
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let games: u64 = args.first().and_then(|s| s.parse().ok()).unwrap_or(2000);
@@ -142,7 +198,7 @@ fn main() {
     for (i, row) in ata.iter_mut().enumerate() {
         row[i] += 1e-3 * train_n as f64;
     }
-    let w = solve(ata, atb);
+    let w = solve_signed(&ata, &atb);
     let (mut sse, mut sst) = (0.0, 0.0);
     for turn in &held {
         for (x, y) in turn {

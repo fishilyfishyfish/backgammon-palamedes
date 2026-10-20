@@ -15,6 +15,7 @@
       <span class="sep">:</span>
       <span><b id="score-ai">0</b> AI</span>
     </div>
+    <a class="btn ghost link" href="analysis.html">분석</a>
     <button id="btn-new" class="btn ghost" type="button">새 게임</button>
   </header>
 
@@ -29,8 +30,11 @@
       <div class="actions">
         <button id="btn-roll" class="btn primary" type="button" disabled>굴리기</button>
         <button id="btn-undo" class="btn" type="button" disabled>무르기</button>
+        <button id="btn-hint" class="btn" type="button" disabled>힌트</button>
         <button id="btn-done" class="btn primary" type="button" disabled>턴 끝내기</button>
       </div>
+
+      <section id="coach" class="coach" aria-live="polite" hidden></section>
 
       <dl class="pips">
         <div><dt><span id="chip-human" class="chip white"></span><span id="name-human">나 (백)</span></dt><dd id="pip-human">167</dd></div>
@@ -52,6 +56,11 @@
           <button type="button" class="seg-btn" data-view="home:right">오른쪽</button>
           <button type="button" class="seg-btn" data-view="home:left">왼쪽</button>
         </div>
+        <div class="seg" role="group" aria-label="친절 모드">
+          <span class="seg-label">친절</span>
+          <button type="button" class="seg-btn" data-view="coach:on">켬</button>
+          <button type="button" class="seg-btn" data-view="coach:off">끔</button>
+        </div>
         <div class="seg" role="group" aria-label="상대">
           <span class="seg-label">상대</span>
           <button type="button" class="seg-btn" data-view="ai:nn">신경망</button>
@@ -60,7 +69,7 @@
         </div>
       </div>
 
-      <p class="hint foot">신경망 AI는 자기대국으로 학습한 신경망, 기준선 AI는 손으로 짠 평가함수로 모든 합법수를 평가해서 가장 좋은 수를 둬(1수 탐색). 말을 누르면 갈 수 있는 칸이 표시돼.</p>
+      <p class="hint foot">신경망 AI는 자기대국으로 학습한 신경망, 기준선 AI는 손으로 짠 평가함수로 모든 합법수를 평가해서 가장 좋은 수를 둬(1수 탐색). 말을 누르면 갈 수 있는 칸이 표시돼. 친절 모드에서는 힌트를 볼 수 있고, 나쁨(에퀴티 0.08 손해) 이상인 수는 두기 전에 이유와 함께 알려 줘.</p>
     </aside>
   </main>
 

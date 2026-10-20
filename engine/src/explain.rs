@@ -172,26 +172,32 @@ pub fn explain(
     let fb = compute_features(better);
     let xw = surrogate_inputs(&fw, mover, is_race(worse));
     let xb = surrogate_inputs(&fb, mover, is_race(better));
-    let mut topics: Vec<(&'static str, f32)> = Vec::new();
+    // (주제, 합계 기여, 주제 안에서 기여가 가장 큰 특징, 그 기여)
+    let mut topics: Vec<(&'static str, f32, &'static str, f32)> = Vec::new();
     let mut approx_delta = 0.0;
     for k in 0..K {
         let c = sur.weights[k] * (xb[k] - xw[k]);
         approx_delta += c;
         let t = topic_of(NAMES[k]);
-        match topics.iter_mut().find(|(n, _)| *n == t) {
-            Some(e) => e.1 += c,
-            None => topics.push((t, c)),
+        match topics.iter_mut().find(|e| e.0 == t) {
+            Some(e) => {
+                e.1 += c;
+                if c > e.3 {
+                    (e.2, e.3) = (NAMES[k], c);
+                }
+            }
+            None => topics.push((t, c, NAMES[k], c)),
         }
     }
     topics.sort_by(|a, b| b.1.total_cmp(&a.1));
     let reasons = topics
         .into_iter()
-        .filter(|&(_, c)| c >= MIN_CONTRIBUTION)
+        .filter(|e| e.1 >= MIN_CONTRIBUTION)
         .take(3)
-        .map(|(topic, contribution)| Reason {
+        .map(|(topic, contribution, lead, _)| Reason {
             topic,
             contribution,
-            text: sentence(topic, &fw, &fb, mover, labels),
+            text: sentence(topic, lead, &fw, &fb, mover, labels),
         })
         .collect();
     Explanation {
@@ -213,8 +219,16 @@ fn blot_phrase(s: &SideFeatures) -> String {
     }
 }
 
-/// 주제별 템플릿 문장. 값은 모두 특징값에서 가져온다. w = 덜 좋은 수, b = 더 좋은 수.
-fn sentence(topic: &str, fw: &Features, fb: &Features, mover: Side, l: Labels) -> String {
+/// 주제별 템플릿 문장. `lead`(주제 안에서 기여가 가장 큰 특징)로 무엇을 말할지 고른다.
+/// 값은 모두 특징값에서 가져온다. w = 덜 좋은 수, b = 더 좋은 수.
+fn sentence(
+    topic: &str,
+    lead: &str,
+    fw: &Features,
+    fb: &Features,
+    mover: Side,
+    l: Labels,
+) -> String {
     let (me_w, me_b) = (&fw.sides[mover.idx()], &fb.sides[mover.idx()]);
     let (op_w, op_b) = (&fw.sides[mover.opp().idx()], &fb.sides[mover.opp().idx()]);
     let (worse, better) = (l.worse, l.better);
@@ -263,6 +277,14 @@ fn sentence(topic: &str, fw: &Features, fb: &Features, mover: Side, l: Labels) -
                 "개",
             ),
         },
+        "prime" if lead == "prime_len" && me_w.prime_len != me_b.prime_len => {
+            let (vw, vb) = (me_w.prime_len as u32, me_b.prime_len as u32);
+            if vb > vw {
+                format!("{better}는 {vb}칸 연속 포인트(프라임)를 만들어. {worse}는 {vw}칸이야.")
+            } else {
+                cmp("가장 긴 연속 포인트", vw, vb, "칸")
+            }
+        }
         "prime" => match (me_w.bar_point, me_b.bar_point) {
             (false, true) => {
                 format!("{better}는 바 포인트(7포인트)를 만들어. {worse}는 못 만들어.")
@@ -281,7 +303,7 @@ fn sentence(topic: &str, fw: &Features, fb: &Features, mover: Side, l: Labels) -
         },
         "anchor" => {
             let (aw, ab) = (me_w.anchors.len() as u32, me_b.anchors.len() as u32);
-            if aw != ab {
+            if aw != ab && (lead == "anchors" || me_w.back_checkers == me_b.back_checkers) {
                 cmp("상대 홈보드에 만든 앵커", aw, ab, "개")
             } else {
                 cmp(

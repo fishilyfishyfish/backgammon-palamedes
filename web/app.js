@@ -1,33 +1,12 @@
 // 대국 화면: 사람 vs AI(신경망, 기준선 엔진, 랜덤 중 선택). 규칙 판단은 전부 엔진(Worker)에 맡긴다.
 // 엔진 진영은 사람 = 0, AI = 1로 고정이고, 말 색과 판 방향은 화면 설정(S.view)일 뿐이다.
+// 친절 모드(S.view.coach === 'on'): 힌트, 큰 실수(나쁨 이상) 전 경고와 이유, 수마다 등급 표시.
 
-const HUMAN = 0;
-const AI = 1;
-const BAR = 25;
+import { AI, BAD, ENGINE_BASELINE, ENGINE_NN, HUMAN, applyStep, createEngine, escapeHtml, gradeClass, loadView, saveGame, storage } from './common.js';
+import { diceList, renderBoard } from './board-view.js';
 
-// ---------- 엔진 호출 ----------
-const worker = new Worker(new URL('./engine-worker.js', import.meta.url), { type: 'module' });
-const pending = new Map();
-let nextId = 1;
-worker.onmessage = (e) => {
-  const { id, ok, result, error } = e.data;
-  const p = pending.get(id);
-  if (!p) return;
-  pending.delete(id);
-  ok ? p.resolve(result) : p.reject(new Error(error));
-};
-worker.onerror = (e) => {
-  setStatus(`엔진을 불러오지 못했어: ${e.message || '알 수 없는 오류'}`);
-};
-function call(fn, ...args) {
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    worker.postMessage({ id, fn, args });
-  });
-}
+const call = createEngine((msg) => setStatus(`엔진을 불러오지 못했어: ${msg}`));
 
-// ---------- 유틸 ----------
 // ?fast 를 붙이면 AI 연출 지연 없이 진행(자동 테스트용).
 const FAST = new URLSearchParams(location.search).has('fast');
 const sleep = (ms) => new Promise((r) => setTimeout(r, FAST ? 0 : ms));
@@ -38,25 +17,7 @@ function rollDie() {
   return (buf[0] % 6) + 1;
 }
 const roll2 = () => [rollDie(), rollDie()];
-const idx = (side, p) => side * 26 + p;
 const flatSteps = (groups) => groups.flat().map(({ from, to, die }) => ({ from, to, die }));
-
-// 엔진이 준 걸음(hit 포함)을 판에 적용. AI 수를 한 걸음씩 보여 줄 때만 쓴다.
-function applyStep(board, side, s) {
-  const b = board.slice();
-  b[idx(side, s.from)] -= 1;
-  b[idx(side, s.to)] += 1;
-  if (s.hit) {
-    b[idx(1 - side, 25 - s.to)] -= 1;
-    b[idx(1 - side, BAR)] += 1;
-  }
-  return b;
-}
-
-const storage = {
-  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 저장 불가 환경 */ } },
-};
 
 // ---------- 상태 ----------
 const S = {
@@ -69,220 +30,93 @@ const S = {
   groups: [], // 이번 턴에 둔 선택지별 걸음 묶음(무르기 단위)
   ts: null, // 엔진 turn_state
   selected: null,
-  history: [], // {side, dice, notation}
-  undoStack: [], // 사람 턴 시작 시점 {board, dice, historyLen}
+  history: [], // {side, dice, notation, before, after, grade?, mark?}
+  undoStack: [], // 사람 턴 시작 시점 {board, dice, historyLen, lastMove}
   lastMove: null, // {side, steps}
   result: null, // {winner, points}
+  gameId: null,
+  hint: null, // hint_json 결과(이번 턴 시작 국면 기준)
+  warning: null, // analyze_move_json 결과(턴 끝내기 전 경고)
   score: storage.get('palamedes.score', { human: 0, ai: 0 }),
   pips: [167, 167],
   busy: false,
-  // 설정. color: 사람 말 색('white'|'black'), home: 사람 홈 위치('right'|'left'),
-  // ai: 상대('nn' = 신경망 + 1수 탐색, 'baseline' = 손 평가 + 1수 탐색, 'random' = 합법수 중 무작위).
-  view: { color: 'white', home: 'right', ai: 'nn', ...storage.get('palamedes.view', {}) },
+  view: loadView(),
 };
 
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
 const svg = $('board');
 const els = {
-  status: $('status'), roll: $('btn-roll'), undo: $('btn-undo'), done: $('btn-done'), newGame: $('btn-new'),
+  status: $('status'), roll: $('btn-roll'), undo: $('btn-undo'), done: $('btn-done'), hint: $('btn-hint'),
+  newGame: $('btn-new'), coach: $('coach'),
   pipH: $('pip-human'), pipA: $('pip-ai'), pipDiff: $('pip-diff'), moves: $('moves'),
   scoreH: $('score-human'), scoreA: $('score-ai'),
   chipH: $('chip-human'), chipA: $('chip-ai'), nameH: $('name-human'), nameA: $('name-ai'),
   viewButtons: document.querySelectorAll('[data-view]'),
 };
 function setStatus(t) { els.status.textContent = t; }
-
-// ---------- 판 기하 (viewBox 932 x 706) ----------
-const G = {
-  PW: 62, D: 56, R: 27,
-  leftX: 22, barX: 394, barW: 56, rightX: 450,
-  top: 42, bottom: 666, mid: 354,
-  trayX: 846, trayW: 76,
-};
-const PT_LEN = 5 * G.D;
-const VB_W = 932;
-
-// 홈을 왼쪽에 두면 판 전체를 좌우로 뒤집는다. X: 중심 좌표, RX: 왼쪽 끝 좌표 + 폭.
-const X = (x) => (S.view.home === 'left' ? VB_W - x : x);
-const RX = (x, w) => (S.view.home === 'left' ? VB_W - x - w : x);
-// 진영의 화면 색: 'w' | 'b'.
-const tone = (side) => ((side === HUMAN) === (S.view.color === 'white') ? 'w' : 'b');
-
-// 사람 기준 포인트 p(1..24)의 중심 x와 위/아래.
-function pointGeom(p) {
-  if (p <= 6) return { x: X(G.rightX + (6 - p + 0.5) * G.PW), top: false };
-  if (p <= 12) return { x: X(G.leftX + (12 - p + 0.5) * G.PW), top: false };
-  if (p <= 18) return { x: X(G.leftX + (p - 13 + 0.5) * G.PW), top: true };
-  return { x: X(G.rightX + (p - 19 + 0.5) * G.PW), top: true };
-}
-function slotY(top, i) {
-  return top ? G.top + G.R + 1 + i * G.D : G.bottom - G.R - 1 - i * G.D;
-}
-function barSlotY(side, i) {
-  // 사람 말은 바 아래쪽, AI 말은 위쪽에 쌓는다.
-  return side === HUMAN ? G.mid + 34 + i * G.D : G.mid - 34 - i * G.D;
-}
-
-function countsAt(board, p) {
-  return { w: board[idx(HUMAN, p)], b: board[idx(AI, 25 - p)] };
-}
-
-function checker(x, y, side, label) {
-  const t = tone(side);
-  let s = `<circle class="ck-${t}" cx="${x}" cy="${y}" r="${G.R}"/>`;
-  if (label) s += `<text class="ck-n-${t}" x="${x}" y="${y}">${label}</text>`;
-  return s;
-}
-
-function dieSvg(x, y, v, side, used) {
-  const size = 46;
-  const h = size / 2;
-  const pos = {
-    1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]],
-    4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]],
-    6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]],
-  }[v];
-  const t = tone(side);
-  const cls = t === 'w' ? 'die' : 'die-b';
-  let s = `<g class="${used ? 'die used' : ''}" opacity="${used ? 0.35 : 1}">`;
-  s += `<rect class="${cls}" x="${x - h}" y="${y - h}" width="${size}" height="${size}" rx="8"/>`;
-  for (const [dx, dy] of pos) s += `<circle class="${t === 'w' ? 'pip' : 'pip-b'}" cx="${x + dx * 12}" cy="${y + dy * 12}" r="4.6"/>`;
-  return s + '</g>';
-}
-
-// 이번 턴에 이미 쓴 주사위 표시용.
-function usedDiceFlags() {
-  if (!S.dice) return [];
-  const [a, b] = S.dice;
-  const list = a === b ? [a, a, a, a] : [a, b];
-  const used = list.map(() => false);
-  if (S.phase === 'move') {
-    for (const st of flatSteps(S.groups)) {
-      const i = list.findIndex((d, k) => d === st.die && !used[k]);
-      if (i >= 0) used[i] = true;
-    }
-  }
-  return list.map((d, i) => ({ d, used: used[i] }));
-}
+const coachOn = () => S.view.coach === 'on';
 
 function render() {
-  const b = S.board;
-  if (!b) return;
-  const parts = [];
-  const W = 932;
-  const H = 706;
-  parts.push(`<rect class="frame" x="${RX(10, 824)}" y="30" width="824" height="648" rx="10"/>`);
-  parts.push(`<rect class="felt" x="${RX(G.leftX, 6 * G.PW)}" y="${G.top}" width="${6 * G.PW}" height="${G.bottom - G.top}"/>`);
-  parts.push(`<rect class="felt" x="${RX(G.rightX, 6 * G.PW)}" y="${G.top}" width="${6 * G.PW}" height="${G.bottom - G.top}"/>`);
-  parts.push(`<rect class="barzone" x="${RX(G.barX, G.barW)}" y="${G.top}" width="${G.barW}" height="${G.bottom - G.top}"/>`);
-  parts.push(`<rect class="frame" x="${RX(G.trayX - 6, G.trayW + 12)}" y="30" width="${G.trayW + 12}" height="648" rx="10"/>`);
-  parts.push(`<rect class="tray" x="${RX(G.trayX, G.trayW)}" y="${G.top}" width="${G.trayW}" height="${PT_LEN}"/>`);
-  parts.push(`<rect class="tray" x="${RX(G.trayX, G.trayW)}" y="${G.bottom - PT_LEN}" width="${G.trayW}" height="${PT_LEN}"/>`);
-
-  // 포인트 삼각형과 번호(사람 기준).
-  for (let p = 1; p <= 24; p++) {
-    const { x, top } = pointGeom(p);
-    const half = G.PW / 2 - 1;
-    const baseY = top ? G.top : G.bottom;
-    const tipY = top ? G.top + PT_LEN - 10 : G.bottom - PT_LEN + 10;
-    const cls = p % 2 === 0 ? 'pt-a' : 'pt-b';
-    parts.push(`<polygon class="${cls}" points="${x - half},${baseY} ${x + half},${baseY} ${x},${tipY}"/>`);
-    parts.push(`<text class="lbl" x="${x}" y="${top ? 22 : 696}">${p}</text>`);
-  }
-
-  // 직전 수 표시(출발·도착 칸).
-  if (S.lastMove && S.phase !== 'move') {
-    const { side, steps } = S.lastMove;
-    const marks = new Set();
-    for (const s of steps) {
-      for (const q of [s.from, s.to]) {
-        if (q >= 1 && q <= 24) marks.add(side === HUMAN ? q : 25 - q);
-      }
-    }
-    for (const p of marks) {
-      const { x, top } = pointGeom(p);
-      parts.push(`<rect class="last" x="${x - G.PW / 2 + 3}" y="${top ? G.top : G.bottom - 8}" width="${G.PW - 6}" height="8" rx="3"/>`);
-    }
-  }
-
-  const fromSet = new Set();
-  const dests = [];
-  if (S.phase === 'move' && S.ts) {
-    for (const o of S.ts.options) fromSet.add(o.from);
-    if (S.selected !== null) for (const o of S.ts.options) if (o.from === S.selected) dests.push(o.to);
-  }
-
-  // 포인트 위 말.
-  for (let p = 1; p <= 24; p++) {
-    const { x, top } = pointGeom(p);
-    const { w, b: bk } = countsAt(b, p);
-    const n = w || bk;
-    const side = w ? HUMAN : AI;
-    for (let i = 0; i < Math.min(n, 5); i++) {
-      const label = i === 4 && n > 5 ? String(n) : '';
-      parts.push(checker(x, slotY(top, i), side, label));
-    }
-    if (n && side === HUMAN && fromSet.has(p)) {
-      const y = slotY(top, Math.min(n, 5) - 1);
-      parts.push(`<circle class="${S.selected === p ? 'sel-ring' : 'can-ring'}" cx="${x}" cy="${y}" r="${G.R + 4}"/>`);
-    }
-  }
-
-  // 바.
-  const bx = X(G.barX + G.barW / 2);
-  for (const side of [HUMAN, AI]) {
-    const n = b[idx(side, BAR)];
-    for (let i = 0; i < Math.min(n, 3); i++) {
-      parts.push(checker(bx, barSlotY(side, i), side, i === 2 && n > 3 ? String(n) : ''));
-    }
-  }
-  if (b[idx(HUMAN, BAR)] && fromSet.has(BAR)) {
-    parts.push(`<circle class="${S.selected === BAR ? 'sel-ring' : 'can-ring'}" cx="${bx}" cy="${barSlotY(HUMAN, 0)}" r="${G.R + 4}"/>`);
-  }
-
-  // 베어오프 트레이: 사람은 아래, AI는 위.
-  const tw = G.trayW - 12;
-  const tx = RX(G.trayX + 6, tw);
-  for (let i = 0; i < b[idx(HUMAN, 0)]; i++) parts.push(`<rect class="off-${tone(HUMAN)}" x="${tx}" y="${G.bottom - 4 - (i + 1) * 17}" width="${tw}" height="14" rx="4"/>`);
-  for (let i = 0; i < b[idx(AI, 0)]; i++) parts.push(`<rect class="off-${tone(AI)}" x="${tx}" y="${G.top + 4 + i * 17}" width="${tw}" height="14" rx="4"/>`);
-
-  // 갈 수 있는 칸.
-  for (const to of dests) {
-    if (to === 0) {
-      parts.push(`<rect class="dest-tray" x="${RX(G.trayX + 2, G.trayW - 4)}" y="${G.bottom - PT_LEN + 2}" width="${G.trayW - 4}" height="${PT_LEN - 4}" rx="6"/>`);
-      continue;
-    }
-    const { x, top } = pointGeom(to);
-    const { w, b: bk } = countsAt(b, to);
-    const slot = bk ? 0 : Math.min(w, 4);
-    parts.push(`<circle class="dest" cx="${x}" cy="${slotY(top, slot)}" r="${G.R}"/>`);
-  }
-
-  // 주사위: 사람은 오른쪽, AI는 왼쪽 판 가운데.
-  if (S.phase === 'opening' && S.openingDice) {
-    parts.push(dieSvg(X(G.rightX + 3 * G.PW), G.mid, S.openingDice[0], HUMAN, false));
-    parts.push(dieSvg(X(G.leftX + 3 * G.PW), G.mid, S.openingDice[1], AI, false));
-  } else if (S.dice) {
-    const flags = usedDiceFlags();
-    const cx = X(S.turn === HUMAN ? G.rightX + 3 * G.PW : G.leftX + 3 * G.PW);
-    const gap = 54;
-    const x0 = cx - ((flags.length - 1) * gap) / 2;
-    flags.forEach((f, i) => parts.push(dieSvg(x0 + i * gap, G.mid, f.d, S.turn, f.used && S.turn === HUMAN)));
-  }
-
-  // 터치 영역(맨 위).
-  for (let p = 1; p <= 24; p++) {
-    const { x, top } = pointGeom(p);
-    const y = top ? G.top : G.mid;
-    parts.push(`<rect class="hit" data-point="${p}" x="${x - G.PW / 2}" y="${y}" width="${G.PW}" height="${G.mid - G.top}"/>`);
-  }
-  parts.push(`<rect class="hit" data-point="${BAR}" x="${RX(G.barX, G.barW)}" y="${G.top}" width="${G.barW}" height="${G.bottom - G.top}"/>`);
-  parts.push(`<rect class="hit" data-point="0" x="${RX(G.trayX - 6, G.trayW + 12)}" y="${G.mid}" width="${G.trayW + 12}" height="${G.bottom - G.mid + 12}"/>`);
-
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.innerHTML = parts.join('');
+  if (!S.board) return;
+  const moving = S.phase === 'move' && S.ts;
+  const selectable = new Set(moving ? S.ts.options.map((o) => o.from) : []);
+  const dests = moving && S.selected !== null ? S.ts.options.filter((o) => o.from === S.selected).map((o) => o.to) : [];
+  renderBoard(svg, {
+    board: S.board,
+    view: S.view,
+    selectable,
+    selected: S.selected,
+    dests,
+    opening: S.phase === 'opening' ? S.openingDice : null,
+    dice: S.dice && S.phase !== 'opening' ? { side: S.turn, list: diceList(S.dice, S.phase === 'move' ? flatSteps(S.groups) : []) } : null,
+    lastMove: S.phase !== 'move' ? S.lastMove : null,
+    // 힌트는 아직 아무것도 안 뒀을 때만 판에 그린다(턴 시작 기준 수라서).
+    hint: S.hint && S.phase === 'move' && S.groups.length === 0 ? { steps: S.hint.best.steps } : null,
+  });
   renderPanel();
+}
+
+function reasonsHtml(ex) {
+  if (!ex) return '';
+  const items = ex.reasons.length
+    ? ex.reasons.map((r) => `<li>${escapeHtml(r.text)}</li>`).join('')
+    : '<li>특징값으로는 이 차이를 설명하지 못했어.</li>';
+  return `<div class="approx"><span class="tag">설명(근사)</span><ul>${items}</ul></div>`;
+}
+
+function renderCoach() {
+  const c = els.coach;
+  if (S.warning) {
+    const a = S.warning;
+    c.hidden = false;
+    c.className = 'coach warn';
+    c.innerHTML = `
+      <div class="judge"><span class="tag">엔진 판단</span>
+        이 수(${escapeHtml(a.played.notation)})는 최선 수(${escapeHtml(a.best.notation)})보다 에퀴티가 ${a.loss.toFixed(3)} 낮아.
+        등급: <b>${a.label} ${a.mark}</b> · 후보 ${a.count}개 중 ${a.rank}위.</div>
+      ${reasonsHtml(a.explanation)}
+      <div class="coach-actions">
+        <button type="button" class="btn" data-coach="redo">다시 두기</button>
+        <button type="button" class="btn primary" data-coach="commit">그래도 두기</button>
+      </div>`;
+    return;
+  }
+  if (S.hint && S.phase === 'move') {
+    const h = S.hint;
+    c.hidden = false;
+    c.className = 'coach hint';
+    const second = h.top[1];
+    const vs = second ? ` 2위 수(${escapeHtml(second.notation)})보다 에퀴티가 ${h.margin.toFixed(3)} 높아.` : ' 둘 수 있는 수가 이것뿐이야.';
+    const note = S.groups.length ? ' (이번 턴 처음 국면 기준이라 무르기로 되돌린 뒤 두면 돼)' : '';
+    c.innerHTML = `
+      <div class="judge"><span class="tag">엔진 판단</span>
+        추천 수: <b>${escapeHtml(h.best.notation)}</b>.${vs} 승리 확률 ${(h.best.probs.win * 100).toFixed(1)}%.${note}</div>
+      ${reasonsHtml(h.explanation)}`;
+    return;
+  }
+  c.hidden = true;
+  c.innerHTML = '';
 }
 
 function renderPanel() {
@@ -292,21 +126,23 @@ function renderPanel() {
   els.pipDiff.textContent = d === 0 ? '핍 카운트가 같아.' : d > 0 ? `내가 ${d}핍 앞서.` : `AI가 ${-d}핍 앞서.`;
   els.scoreH.textContent = S.score.human;
   els.scoreA.textContent = S.score.ai;
-  const colorName = (side) => (tone(side) === 'w' ? '백' : '흑');
-  els.chipH.className = `chip ${tone(HUMAN) === 'w' ? 'white' : 'black'}`;
-  els.chipA.className = `chip ${tone(AI) === 'w' ? 'white' : 'black'}`;
-  els.nameH.textContent = `나 (${colorName(HUMAN)})`;
-  els.nameA.textContent = `AI (${colorName(AI)})`;
+  const tone = (side) => ((side === HUMAN) === (S.view.color === 'white') ? 'white' : 'black');
+  els.chipH.className = `chip ${tone(HUMAN)}`;
+  els.chipA.className = `chip ${tone(AI)}`;
+  els.nameH.textContent = `나 (${tone(HUMAN) === 'white' ? '백' : '흑'})`;
+  els.nameA.textContent = `AI (${tone(AI) === 'white' ? '백' : '흑'})`;
   for (const btn of els.viewButtons) {
     const [key, value] = btn.dataset.view.split(':');
     btn.setAttribute('aria-pressed', String(S.view[key] === value));
   }
 
   els.roll.disabled = S.busy || !(S.phase === 'opening' || S.phase === 'roll');
-  els.done.disabled = S.busy || !(S.phase === 'move' && S.ts && S.ts.done);
-  els.undo.disabled = S.busy || !canUndo();
+  els.done.disabled = S.busy || !!S.warning || !(S.phase === 'move' && S.ts && S.ts.done);
+  els.undo.disabled = S.busy || !!S.warning || !canUndo();
+  els.hint.hidden = !coachOn();
+  els.hint.disabled = S.busy || !!S.warning || S.phase !== 'move' || !S.ts || S.ts.need === 0;
 
-  // 기보: 한 줄에 (사람, AI) 한 쌍.
+  // 기보: 한 줄에 (사람, AI) 한 쌍. 친절 모드면 내 수에 등급 기호.
   const rows = [];
   let row = null;
   for (const h of S.history) {
@@ -316,13 +152,29 @@ function renderPanel() {
     }
     row[h.side] = h;
   }
-  const cell = (h) => (h ? `<span><span class="dice">${h.dice[0]}${h.dice[1]}</span>${h.notation}</span>` : '<span class="empty">—</span>');
+  const cell = (h) => {
+    if (!h) return '<span class="empty">—</span>';
+    const mark = h.mark ? ` <b class="mark ${gradeClass(h.grade)}">${h.mark}</b>` : '';
+    return `<span><span class="dice">${h.dice[0]}${h.dice[1]}</span>${escapeHtml(h.notation)}${mark}</span>`;
+  };
   els.moves.innerHTML = rows.map((r) => `<li><div class="mv">${cell(r[HUMAN])}${cell(r[AI])}</div></li>`).join('');
   els.moves.scrollTop = els.moves.scrollHeight;
+  renderCoach();
 }
 
 async function updatePips() {
   S.pips = await call('pip_counts', S.board);
+}
+
+function persist() {
+  if (!S.gameId) return;
+  saveGame({
+    id: S.gameId,
+    date: new Date(S.gameId).toISOString(),
+    ai: S.view.ai,
+    entries: S.history.map(({ side, dice, notation, before, after }) => ({ side, dice, notation, before, after })),
+    result: S.result,
+  });
 }
 
 // ---------- 진행 ----------
@@ -331,6 +183,7 @@ async function newGame() {
   Object.assign(S, {
     phase: 'opening', board, turn: HUMAN, dice: null, openingDice: null, turnStart: null,
     groups: [], ts: null, selected: null, history: [], undoStack: [], lastMove: null, result: null,
+    gameId: Date.now(), hint: null, warning: null,
   });
   await updatePips();
   setStatus('첫 수를 정하자. 굴리기를 누르면 서로 주사위를 하나씩 굴려서 높은 쪽이 먼저 둬.');
@@ -363,7 +216,7 @@ async function onRoll() {
 
 async function beginHumanTurn(dice, keepStatus = false) {
   S.undoStack.push({ board: S.board.slice(), dice, historyLen: S.history.length, lastMove: S.lastMove });
-  Object.assign(S, { turn: HUMAN, dice, turnStart: S.board.slice(), groups: [], selected: null, phase: 'move' });
+  Object.assign(S, { turn: HUMAN, dice, turnStart: S.board.slice(), groups: [], selected: null, phase: 'move', hint: null, warning: null });
   await refreshTurn(keepStatus);
 }
 
@@ -384,7 +237,7 @@ async function refreshTurn(keepStatus = false) {
 }
 
 async function onPoint(p) {
-  if (S.phase !== 'move' || !S.ts) return;
+  if (S.phase !== 'move' || !S.ts || S.warning) return;
   const opts = S.ts.options;
   if (S.selected !== null) {
     const o = opts.find((x) => x.from === S.selected && x.to === p);
@@ -404,25 +257,64 @@ async function onPoint(p) {
   render();
 }
 
+async function onHint() {
+  if (!coachOn() || S.phase !== 'move' || !S.ts || S.ts.need === 0) return;
+  S.hint = await call('hint_json', S.turnStart, HUMAN, S.dice[0], S.dice[1], ENGINE_NN);
+  setStatus(S.groups.length ? '힌트는 이번 턴 처음 국면 기준이야.' : '번호가 붙은 칸이 추천 수야.');
+  render();
+}
+
 async function onDone() {
-  if (S.phase !== 'move' || !S.ts || !S.ts.done) return;
-  S.history.push({ side: HUMAN, dice: S.dice, notation: S.ts.notation });
+  if (S.phase !== 'move' || !S.ts || !S.ts.done || S.warning) return;
+  let analysis = null;
+  if (coachOn() && S.ts.need > 0) {
+    analysis = await call('analyze_move_json', S.turnStart, HUMAN, S.dice[0], S.dice[1], S.ts.board, ENGINE_NN);
+    if (analysis.loss >= BAD) {
+      S.warning = analysis;
+      setStatus('잠깐, 큰 실수일 수 있어. 아래 설명을 보고 정해.');
+      render();
+      return;
+    }
+  }
+  await commitHumanMove(analysis);
+}
+
+async function commitHumanMove(analysis) {
+  S.warning = null;
+  S.hint = null;
+  const entry = { side: HUMAN, dice: S.dice, notation: S.ts.notation, before: S.turnStart.slice(), after: S.ts.board.slice() };
+  if (analysis) Object.assign(entry, { grade: analysis.grade, mark: analysis.mark });
+  S.history.push(entry);
   S.lastMove = { side: HUMAN, steps: S.ts.steps };
+  persist();
   if (await checkOver()) return;
   await aiTurn(roll2());
 }
 
+async function onCoach(action) {
+  if (!S.warning) return;
+  if (action === 'commit') {
+    await commitHumanMove(S.warning);
+  } else {
+    // 다시 두기: 이번 턴에 둔 걸음을 모두 되돌린다.
+    S.warning = null;
+    S.groups = [];
+    S.selected = null;
+    await refreshTurn();
+  }
+}
+
 async function aiTurn(dice) {
-  Object.assign(S, { phase: 'ai', turn: AI, dice, selected: null, ts: null });
+  Object.assign(S, { phase: 'ai', turn: AI, dice, selected: null, ts: null, hint: null, warning: null });
   render();
   await sleep(450);
+  const before = S.board.slice();
   let m;
   if (S.view.ai === 'random') {
     const moves = await call('legal_moves_json', S.board, AI, dice[0], dice[1]);
     m = moves[Math.floor(Math.random() * moves.length)];
   } else {
-    // 에퀴티가 가장 높은 수. 순위 목록은 5단계 설명 층에서 쓴다.
-    const engine = S.view.ai === 'baseline' ? 0 : 1;
+    const engine = S.view.ai === 'baseline' ? ENGINE_BASELINE : ENGINE_NN;
     m = (await call('rank_moves_json', S.board, AI, dice[0], dice[1], engine))[0];
   }
   if (m.steps.length === 0) {
@@ -437,8 +329,9 @@ async function aiTurn(dice) {
     }
     S.board = m.board;
   }
-  S.history.push({ side: AI, dice, notation: m.notation });
+  S.history.push({ side: AI, dice, notation: m.notation, before, after: m.board.slice() });
   S.lastMove = { side: AI, steps: m.steps };
+  persist();
   await updatePips();
   if (await checkOver()) return;
   S.phase = 'roll';
@@ -455,7 +348,8 @@ async function checkOver() {
   if (r.winner === HUMAN) S.score.human += r.points;
   else S.score.ai += r.points;
   storage.set('palamedes.score', S.score);
-  setStatus(`${r.winner === HUMAN ? '내가 이겼어' : 'AI가 이겼어'}. ${kind} ${r.points}점. 새 게임을 눌러.`);
+  persist();
+  setStatus(`${r.winner === HUMAN ? '내가 이겼어' : 'AI가 이겼어'}. ${kind} ${r.points}점. 분석 화면에서 복기할 수 있어.`);
   render();
   return true;
 }
@@ -467,7 +361,7 @@ function canUndo() {
 }
 
 async function onUndo() {
-  if (!canUndo()) return;
+  if (!canUndo() || S.warning) return;
   if (S.phase === 'move' && S.groups.length) {
     S.groups.pop();
     S.selected = null;
@@ -486,6 +380,7 @@ async function onUndo() {
   S.board = snap.board.slice();
   S.history.length = snap.historyLen;
   S.lastMove = snap.lastMove;
+  persist();
   await beginHumanTurn(snap.dice);
   setStatus(`되돌렸어. ${snap.dice[0]}-${snap.dice[1]}로 다시 둬.`);
 }
@@ -494,7 +389,8 @@ async function onUndo() {
 // 상태를 바꾸는 동작은 한 번에 하나만. 진행 중에는 다른 입력(연타 포함)을 무시한다.
 function guarded(fn) {
   return async (...args) => {
-      S.busy = true;
+    if (S.busy) return;
+    S.busy = true;
     renderPanel();
     try {
       await fn(...args);
@@ -508,14 +404,15 @@ function guarded(fn) {
   };
 }
 const act = {
-  point: guarded(onPoint), roll: guarded(onRoll), done: guarded(onDone),
-  undo: guarded(onUndo), newGame: guarded(newGame),
+  point: guarded(onPoint), roll: guarded(onRoll), done: guarded(onDone), hint: guarded(onHint),
+  undo: guarded(onUndo), newGame: guarded(newGame), coach: guarded(onCoach),
 };
 // 화면 설정은 진행 중에도 바로 바꿀 수 있다(판 상태와 무관).
 for (const btn of els.viewButtons) {
   btn.addEventListener('click', () => {
     const [key, value] = btn.dataset.view.split(':');
     S.view[key] = value;
+    if (key === 'coach' && value === 'off') S.hint = null;
     storage.set('palamedes.view', S.view);
     render();
   });
@@ -524,14 +421,20 @@ svg.addEventListener('click', (e) => {
   const t = e.target.closest('[data-point]');
   if (t) act.point(Number(t.dataset.point));
 });
+els.coach.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-coach]');
+  if (t) act.coach(t.dataset.coach);
+});
 els.roll.addEventListener('click', act.roll);
 els.done.addEventListener('click', act.done);
 els.undo.addEventListener('click', act.undo);
+els.hint.addEventListener('click', act.hint);
 els.newGame.addEventListener('click', act.newGame);
 document.addEventListener('keydown', (e) => {
-  if (e.target.closest('button')) return;
+  if (e.target.closest('button, select, a')) return;
   if (e.key === 'r' || e.key === ' ') { e.preventDefault(); act.roll(); }
   else if (e.key === 'Enter') act.done();
+  else if (e.key === 'h') act.hint();
   else if (e.key === 'u' || (e.key === 'z' && (e.ctrlKey || e.metaKey))) act.undo();
 });
 

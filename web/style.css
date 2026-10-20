@@ -21,6 +21,10 @@
   --last: rgba(31, 111, 235, 0.35);
   --die: #ffffff;
   --die-pip: #22201c;
+  --hint: #7c3aed;
+  --doubtful: #b7791f;
+  --bad: #c2410c;
+  --very-bad: #b91c1c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -39,6 +43,10 @@
     --bar: #2e2116;
     --tray: #3d3528;
     --last: rgba(76, 141, 255, 0.4);
+    --hint: #a78bfa;
+    --doubtful: #f6c453;
+    --bad: #fb923c;
+    --very-bad: #f87171;
   }
 }
 
@@ -57,6 +65,10 @@
   --bar: #2e2116;
   --tray: #3d3528;
   --last: rgba(76, 141, 255, 0.4);
+  --hint: #a78bfa;
+  --doubtful: #f6c453;
+  --bad: #fb923c;
+  --very-bad: #f87171;
 }
 
 * { box-sizing: border-box; }
@@ -131,7 +143,10 @@ button { font: inherit; }
   gap: 12px;
   min-height: 0;
   max-height: calc(100dvh - 90px);
+  overflow-y: auto;
 }
+.panel > * { flex-shrink: 0; }
+.panel > .moves { flex-shrink: 1; }
 
 .status {
   margin: 0;
@@ -145,12 +160,13 @@ button { font: inherit; }
 
 .actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(5.5em, 1fr));
   gap: 8px;
 }
 
 .btn {
   min-height: 48px;
+  white-space: nowrap;
   padding: 0 12px;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -209,6 +225,81 @@ button { font: inherit; }
 .moves .empty { color: var(--muted); }
 
 .foot { margin-top: auto; }
+
+a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.btn[hidden] { display: none; }
+
+/* 친절 모드 · 분석 설명 */
+.coach {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px 12px;
+  line-height: 1.5;
+  font-size: 0.92rem;
+}
+.coach[hidden] { display: none; }
+.coach.warn { border-left-color: var(--bad); }
+.coach ul { margin: 4px 0 0; padding-left: 18px; }
+.coach .judge { margin-bottom: 6px; }
+.tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  margin-right: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  vertical-align: 1px;
+}
+.approx { color: var(--text); }
+.approx .tag { border-style: dashed; }
+.coach-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+
+.mark { font-weight: 800; }
+.grade-doubtful { color: var(--doubtful); }
+.grade-bad { color: var(--bad); }
+.grade-very_bad { color: var(--very-bad); }
+.grade-best, .grade-good { color: var(--muted); }
+
+.field { display: grid; grid-template-columns: 3.5em 1fr; align-items: center; gap: 4px; }
+.field select {
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  padding: 0 8px;
+  min-width: 0;
+}
+.nav { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+.pos { font-variant-numeric: tabular-nums; color: var(--muted); }
+.pips dd.small { font-size: 0.9rem; font-weight: 500; line-height: 1.5; }
+.cands { width: 100%; border-collapse: collapse; margin: 6px 0; font-variant-numeric: tabular-nums; font-size: 0.88rem; }
+.cands th, .cands td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+.cands th { color: var(--muted); font-weight: 600; }
+.cands tr.played td { font-weight: 700; }
+.contrib { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mv-btn {
+  font: inherit;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 6px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.mv-btn.cur { background: var(--accent); color: var(--accent-text); }
+.mv-btn.cur .dice, .mv-btn.cur .mark { color: inherit; }
+
+.hint-from { fill: none; stroke: var(--hint); stroke-width: 4; stroke-dasharray: 4 4; }
+.hint-to { fill: var(--hint); fill-opacity: 0.35; stroke: var(--hint); stroke-width: 3; }
+.hint-n { fill: var(--text); font-size: 20px; font-weight: 800; text-anchor: middle; dominant-baseline: central; }
 
 .view-settings { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .seg {

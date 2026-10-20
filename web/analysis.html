@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Palamedes 분석</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Palamedes <span class="sub">분석</span></h1>
+    <a class="btn ghost link" href="index.html">대국</a>
+  </header>
+
+  <main class="app">
+    <section class="board-wrap">
+      <svg id="board" viewBox="0 0 932 706" role="img" aria-label="복기 중인 판"></svg>
+    </section>
+
+    <aside class="panel">
+      <label class="field">
+        <span class="seg-label">기보</span>
+        <select id="game-select"></select>
+      </label>
+      <p id="status" class="status" aria-live="polite">엔진을 불러오는 중…</p>
+
+      <dl id="summary" class="pips"></dl>
+
+      <div class="nav">
+        <button id="btn-prev" class="btn" type="button" aria-label="이전 수">◀ 이전</button>
+        <span id="pos" class="pos"></span>
+        <button id="btn-next" class="btn" type="button" aria-label="다음 수">다음 ▶</button>
+      </div>
+      <div class="seg" role="group" aria-label="판 보기">
+        <span class="seg-label">판</span>
+        <button type="button" class="seg-btn" data-show="before">두기 전</button>
+        <button type="button" class="seg-btn" data-show="played">둔 수</button>
+        <button type="button" class="seg-btn" data-show="best">최선 수</button>
+      </div>
+
+      <section id="detail" class="coach" aria-live="polite" hidden></section>
+
+      <h2>기보</h2>
+      <ol id="moves" class="moves"></ol>
+
+      <p class="hint foot">"엔진 판단"은 신경망이 계산한 에퀴티(1수 탐색)이고, "설명(근사)"은 특징값으로 신경망 에퀴티를 근사한 선형 모델이 차이를 어디에 돌리는지야. 등급: 손실 0.04 이상 의심스러움(?!), 0.08 이상 나쁨(?), 0.16 이상 매우 나쁨(??).</p>
+    </aside>
+  </main>
+
+  <script type="module" src="analysis.js"></script>
+</body>
+</html>

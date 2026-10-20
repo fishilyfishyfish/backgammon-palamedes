@@ -46,6 +46,7 @@ const state = () => page.evaluate(() => {
     phase: S.phase, busy: S.busy, selected: S.selected, result: S.result,
     options: S.ts ? S.ts.options.map((o) => [o.from, o.to]) : [], done: S.ts ? S.ts.done : false,
     groups: S.groups.length, history: S.history.length, stack: S.undoStack.length,
+    warning: !!S.warning, hint: !!S.hint,
   };
 });
 async function waitIdle() {
@@ -60,6 +61,8 @@ await page.goto(url);
 await waitIdle();
 const tally = { 1: 0, 2: 0, 3: 0 };
 let undos = 0;
+let warnings = 0;
+let hints = 0;
 for (let g = 0; g < games; g++) {
   if (g > 0) {
     await page.locator('#btn-new').click();
@@ -81,6 +84,23 @@ for (let g = 0; g < games; g++) {
       continue;
     }
     if (s.phase === 'move') {
+      if (s.warning) {
+        // 큰 실수 경고: 대부분 그대로 두고, 가끔 다시 두기.
+        warnings++;
+        if (shotDir && warnings === 1) {
+          fs.mkdirSync(shotDir, { recursive: true });
+          await page.screenshot({ path: path.join(shotDir, 'coach-warning.png'), fullPage: true });
+        }
+        await page.locator(`[data-coach="${Math.random() < 0.3 ? 'redo' : 'commit'}"]`).click();
+        continue;
+      }
+      if (!s.hint && s.groups === 0 && s.options.length && Math.random() < 0.15) {
+        await page.locator('#btn-hint').click();
+        await waitIdle();
+        hints++;
+        if (!(await state()).hint) throw new Error('hint not shown');
+        continue;
+      }
       if (s.done) {
         // 가끔 무르기 후 다시 두기.
         if (s.groups > 0 && Math.random() < 0.1) {
@@ -102,10 +122,41 @@ for (let g = 0; g < games; g++) {
     throw new Error(`unexpected phase ${s.phase}`);
   }
 }
-console.log(`games: ${games}, results by points: ${JSON.stringify(tally)}, undos: ${undos}`);
+console.log(`games: ${games}, results by points: ${JSON.stringify(tally)}, undos: ${undos}, hints: ${hints}, warnings: ${warnings}`);
+
+// 분석 화면: 저장된 마지막 판을 끝까지 분석하고 수마다 결과가 있는지 확인.
+// 같은 페이지(localStorage 공유)에서 분석 화면으로 이동.
+const ap = page;
+await ap.setViewportSize({ width: 1180, height: 820 });
+await ap.goto(url.replace('?fast', 'analysis.html'));
+await ap.waitForFunction(() => {
+  const A = window.__palamedesAnalysis && window.__palamedesAnalysis.state;
+  return A && A.game && A.results.length === A.game.entries.length && A.results.every(Boolean);
+}, null, { timeout: 60000 });
+const summary = await ap.evaluate(() => {
+  const A = window.__palamedesAnalysis.state;
+  const errs = A.results.filter((r) => r.error).length;
+  const grades = {};
+  for (const r of A.results) grades[r.grade] = (grades[r.grade] || 0) + 1;
+  const explained = A.results.filter((r) => r.explanation && r.explanation.reasons.length).length;
+  return { moves: A.results.length, errs, grades, explained, games: A.games.length };
+});
+console.log(`analysis: ${JSON.stringify(summary)}`);
+if (summary.errs) throw new Error('analysis errors');
+for (let i = 0; i < 5; i++) await ap.locator('#btn-next').click();
+await ap.locator('[data-show="best"]').click();
 
 if (shotDir) {
   fs.mkdirSync(shotDir, { recursive: true });
+  // 설명이 있는 수로 이동해서 찍는다.
+  const k = await ap.evaluate(() => window.__palamedesAnalysis.state.results.findIndex((r) => r.explanation && r.explanation.reasons.length));
+  if (k >= 0) await ap.locator(`[data-i="${k}"]`).click();
+  await ap.locator('[data-show="played"]').click();
+  await ap.screenshot({ path: path.join(shotDir, 'analysis-tablet.png'), fullPage: true });
+  await ap.setViewportSize({ width: 390, height: 844 });
+  await ap.screenshot({ path: path.join(shotDir, 'analysis-phone.png'), fullPage: true });
+  await page.goto(url);
+  await waitIdle();
   await page.locator('#btn-new').click();
   // 내가 둘 차례(선택지 표시 상태)가 될 때까지 진행.
   for (;;) {
