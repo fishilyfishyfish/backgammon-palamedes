@@ -70,6 +70,11 @@ cd engine && cargo run --release --example calibrate -- 400 1296
 cd engine && cargo run --release --example bot_mistakes -- 300
 # 봇 레이팅 맞추기(잡음 이분 탐색, bots.json 갱신)
 cd engine && cargo run --release --example calibrate_bots -- 1000 3000 weights/bots.json
+# GNU 백개먼과 미러 대국(측정 전용, apt install gnubg 필요): 우리 플레이어 vs gnubg 깊이(0|1|2)
+cd engine && cargo run --release --example vs_gnubg -- nn@2 0 1000
+# 2수 증류(자기 2수 평가로 다시 학습), 베어오프 실수 측정(정확한 한쪽 베어오프 표 기준)
+cd engine && cargo run --release --example distill -- rounds=4 positions=1000000
+cd engine && cargo run --release --example bearoff_check -- 3000
 # 계산한 매치 에퀴티 표 출력
 cd engine && cargo run --release --example met -- 9
 # 시작 국면 15가지 주사위의 선택과 상위 후보 (hand | nn | nn:<경로>)
@@ -107,7 +112,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `engine/src/nn.rs` | 신경망 `Net`(입력 인코딩 `encode`/손 특징 `encode_ext`, 희소 순전파·역전파, PNN1 저장 형식), `NnEval`(포함된 가중치) |
 | `engine/src/train.rs` | TD(λ) 자기대국: `self_play_game`(λ-리턴 표본), `train_round`(병렬 라운드) |
 | `engine/weights/` | `td.bin`(신경망 가중치), `surrogate.json`(설명용 대리 모델), `logs/`(학습 기록). 둘 다 엔진에 포함 |
-| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인), `fit_surrogate`, `cubematch`(큐브 정책), `met`(MET 출력), `calibrate`(신경망 보정 검사), `bot_mistakes`(봇별 실수 분포), `calibrate_bots`(봇 레이팅 맞추기) |
+| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인), `fit_surrogate`, `cubematch`(큐브 정책), `met`(MET 출력), `calibrate`(신경망 보정 검사), `bot_mistakes`(봇별 실수 분포), `calibrate_bots`(봇 레이팅 맞추기), `vs_gnubg`(gnubg와 대국), `distill`(2수 증류), `bearoff_check`(베어오프 실수) |
 | `engine/src/analysis.rs` | 실수 등급 `Grade`(gnubg 기본 임계값), `analyze_move`, `hint` |
 | `engine/src/explain.rs` | 설명 층: 대리 모델 입력 `surrogate_inputs`, `Surrogate`(포함된 가중치), 주제별 기여도 `explain`, 템플릿 문장 |
 | `engine/src/cube.rs` | 큐브: Janowski 큐브 에퀴티, 머니 판단 `money_decision`, 국면 → 판단 `decide`, 근거 문장 `cube_reasons`, `CubeState` |
@@ -121,7 +126,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `web/board-view.js` | SVG 판 그리기(대국·분석 공용) |
 | `web/common.js` | 엔진 RPC, 저장소, 설정, 기보 저장, 공용 상수 |
 | `web/engine-worker.js` | WASM을 올린 module worker, `{id, fn, args}` RPC |
-| `scripts/build-wasm.sh`, `scripts/ui-smoke.mjs` | WASM 빌드, UI 자동 점검 |
+| `scripts/build-wasm.sh`, `scripts/ui-smoke.mjs`, `scripts/gnubg-driver.py` | WASM 빌드, UI 자동 점검, gnubg 수 선택 서버(측정 전용) |
 
 ## 설계 결정과 이유
 
@@ -403,6 +408,25 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
   힌트·경고·분석은 상대와 무관하게 항상 엔진(2수) 기준.
 - 처음엔 난이도 1~5(같은 습관에 배율만 다름)였다가 이 방식으로 바꿨다.
 
+### GNU 백개먼과 비교, 강화 시도
+- 사용자 피드백: "가장 센 봇도 너무 약하다". 그래서 외부 기준으로 gnubg와 붙였다.
+- gnubg는 apt 패키지(`gnubg` 1.07.001, 패키지 관리자 접속은 이 환경에서 허용)로 설치해 **측정에만** 쓴다(배포 안 함, GPL 코드·가중치를 사이트에 넣지 않음).
+  `gnubg -t -q -p scripts/gnubg-driver.py`로 띄워 파이썬 `gnubg.findbestmove()`로 수를 받는다(포인트 번호는 우리와 같고 바 25, 베어오프 0).
+  받은 (출발, 도착)을 직접 적용한 결과 국면이 우리 합법수 결과 중 하나와 같은지 확인한다(아니면 중단). 큐브 없는 머니 단판, 미러 대국.
+
+  | 우리 | gnubg | 판 수 | 결과 |
+  |---|---|---|---|
+  | 신경망 1수 | 0-ply | 2000 | −0.102 ± 0.027 ppg, 43.5% 승 |
+  | 신경망 2수(팔라메데스) | 0-ply | 2000 | −0.052 ± 0.026 ppg, 46.2% 승 |
+  | 신경망 2수(팔라메데스) | 2-ply | 600 | −0.078 ± 0.048 ppg, 45.5% 승 |
+
+  gnubg 0-ply(gnubg의 "expert"급)보다도 약하다. 큐브까지 넣으면 차이가 더 클 수 있다(큐브 모델이 어림값).
+- **2수 증류(채택 안 함)**: 자기대국 국면 100만 개를 지금 신경망의 2수(굴리기 전, 21굴림 최선 수 평균)로 평가해 정답으로 이어 학습,
+  4회 반복(`distill`, 회차당 약 3~11분). 시작 가중치 대비 1수 +0.013, −0.002, +0.010, −0.011 (± 0.01). 같은 신경망의 2수라 새 정보가 적다.
+- **베어오프는 문제가 아니다**: 정확한 한쪽 베어오프 표(홈 안 15개, 54,264국면, 기대 굴림 수 최소, 1.7초에 계산)로 양쪽 다 하나 이상 뺀
+  국면 3000개를 보면, 선택이 갈리는 1447국면에서 평균 손실 1수 0.0015 / 2수 0.0008, 0.01 넘는 실수 3.7% / 2.3%. 그래서 베어오프 DB는 넣지 않았다.
+  약한 곳은 접촉 국면 판단이다.
+
 ## 성능 기록
 
 측정 환경: 이 개발 컨테이너(x86_64 Linux), `cargo run --release --example bench`, 무작위 자기대국에서 모은 국면.
@@ -465,6 +489,8 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | 2026-10-21 | 봇 레이팅 보정(`calibrate_bots 1000 3000`, 4스레드) | 약 70분. 기준(신경망 1수) 1727 ± 22, 봇 9개 모두 목표 ±42 안 |
 | 2026-10-21 | WASM 크기 (봇 추가) | 498 KB |
 | 2026-10-21 | 테스트 `cargo test --release` (봇) | 61개 통과 |
+| 2026-10-21 | gnubg와 미러 대국 (큐브 없음) | 신경망 2수 vs gnubg 0-ply −0.052 ± 0.026(2000판), vs 2-ply −0.078 ± 0.048(600판) |
+| 2026-10-21 | gnubg 대국 속도(4스레드) | 0-ply 2000판 약 100초, 2-ply 600판 약 185초 |
 | 2026-10-20 | 테스트 `cargo test --release` (6단계) | 54개 통과 |
 
 ## 현재 상태와 남은 문제
@@ -481,4 +507,5 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 - MET는 모델로 계산한 값이다(공개 표 대신). 큐브 효율 x는 어림값이지만 ±0.15 범위에서 미러 대국으로 더 나은 값을 못 찾았다. MET는 공개 표로 검증·교체할 여지가 있다.
 - 체커 플레이의 매치 목표는 죽은 큐브 MWC다(큐브 소유에 따른 수 선택 차이는 반영 안 함). 머니 게임 체커 플레이는 큐브 없는 에퀴티다.
 - 롤아웃은 큐브 없는 머니 기준만 있다(큐브·매치 롤아웃 없음). 웹 롤아웃 표준오차가 ±0.08 정도로 커서 가까운 후보는 가려내지 못한다. 행운 보정은 같은 시간 기준으로 이득이 없었다(위).
+- 엔진은 gnubg 0-ply보다 약하다(위 "GNU 백개먼과 비교"). 2수 증류는 효과 없음, 베어오프는 문제 아님. 남은 길은 접촉 국면 판단 개선.
 - 신경망 학습은 큐브 없이 했다. 큐브가 있는 판의 국면 분포는 학습 분포와 다를 수 있다.

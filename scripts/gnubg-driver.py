@@ -1,0 +1,25 @@
+# gnubg 안에서 도는 수 선택 서버(측정 전용, 배포에 안 씀). engine/examples/vs_gnubg.rs가 띄운다.
+#   gnubg -t -q -p scripts/gnubg-driver.py
+# 입력 한 줄: "ply <n>" 또는 "<굴릴 쪽 25칸> <상대 25칸> <d1> <d2>"(칸 0..23 = 포인트 1..24, 24 = 바, 각자 기준)
+# 출력: "READY", "OK", "MOVE <from> <to> ..."(gnubg findbestmove, 포인트 1..24, 바 25, 베어오프 0)
+import sys
+import gnubg
+
+for c in ['set player 0 human', 'set player 1 human', 'set automatic roll off', 'set automatic game off',
+          'new game', 'set evaluation chequerplay evaluation plies 0', 'set turn 1']:
+    gnubg.command(c)
+print('READY', flush=True)
+for line in sys.stdin:
+    parts = line.split()
+    if not parts:
+        continue
+    if parts[0] == 'ply':
+        gnubg.command('set evaluation chequerplay evaluation plies %d' % int(parts[1]))
+        print('OK', flush=True)
+        continue
+    v = list(map(int, parts))
+    me, opp, d1, d2 = v[0:25], v[25:50], v[50], v[51]
+    gnubg.command('set board %s' % gnubg.positionid((opp, me)))
+    gnubg.command('set dice %d%d' % (d1, d2))
+    mv = gnubg.findbestmove()
+    print('MOVE ' + ' '.join(str(x) for x in mv), flush=True)
