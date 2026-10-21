@@ -1,0 +1,6 @@
+config: TrainConfig { inputs: 221, hidden: 128, games: 2000000, lambda: 0.7, lr_start: 0.02, lr_end: 0.001, explore: 0.0, threads: 4, games_per_thread: 4, seed: 1 }, eval_every=400000, eval_pairs=500, out=td-ext2.bin, init=None
+games  400000     437s  lr 0.0162  loss 0.1843  vs hand: ppg +0.453 ± 0.040, wins 66.6%
+games  800000     859s  lr 0.0124  loss 0.1843  vs hand: ppg +0.434 ± 0.041, wins 65.0%
+games 1200000    1279s  lr 0.0086  loss 0.1845  vs hand: ppg +0.456 ± 0.040, wins 66.0%
+games 1600000    1699s  lr 0.0048  loss 0.1877  vs hand: ppg +0.441 ± 0.042, wins 64.2%
+games 2000000    2125s  lr 0.0010  loss 0.1899  vs hand: ppg +0.468 ± 0.041, wins 67.4%
