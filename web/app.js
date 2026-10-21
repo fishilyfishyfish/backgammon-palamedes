@@ -1,11 +1,12 @@
-// 대국 화면: 사람 vs AI(신경망, 난이도 1~5). 규칙 판단은 전부 엔진(Worker)에 맡긴다.
+// 대국 화면: 사람 vs AI(레이팅별 봇, 모두 신경망). 규칙 판단은 전부 엔진(Worker)에 맡긴다.
 // 엔진 진영은 사람 = 0, AI = 1로 고정이고, 말 색과 판 방향은 화면 설정(S.view)일 뿐이다.
 // 더블링 큐브: 굴리기 전에 더블할 수 있다. 머니 게임 또는 n점 매치(크로포드 규칙).
 // 친절 모드(S.view.coach === 'on'): 수·큐브 힌트, 나쁨 이상의 수·큐브 판단 전 경고와 이유, 기보에 등급 표시.
 
 import {
   AI, BAD, ENGINE_NN, BAR, HUMAN, PLY_NN,
-  applyStep, createEngine, ctxJson, escapeHtml, gradeClass, gradeOf, loadView, saveGame, storage,
+  DEFAULT_BOT, RATING_START, applyStep, avatarSvg, createEngine, ctxJson, escapeHtml, gradeClass, gradeOf, loadView,
+  rateResult, saveGame, storage,
 } from './common.js';
 import { diceList, renderBoard } from './board-view.js';
 
@@ -52,6 +53,10 @@ const S = {
   cubeWarn: null, // {kind: 'double'|'roll'|'take'|'pass', dec, loss}
   cubeOffer: null, // AI가 더블했을 때 AI 기준 cube_decision_json 결과
   score: storage.get('palamedes.score', { human: 0, ai: 0 }),
+  bots: [], // bots_json(엔진에 포함된 봇 목록, 레이팅 오름차순)
+  opp: null, // 이번 판 상대 봇 번호. 설정(view.ai)을 바꾸면 다음 새 게임부터.
+  // 내 레이팅. exp = 지금까지 레이팅에 반영된 점수(머니 한 판 1, n점 매치 n).
+  rating: storage.get('palamedes.rating', { rating: RATING_START, exp: 0, games: 0 }),
   pips: [167, 167],
   busy: false,
   view: loadView(),
@@ -64,7 +69,8 @@ const els = {
   status: $('status'), roll: $('btn-roll'), undo: $('btn-undo'), done: $('btn-done'), hint: $('btn-hint'),
   double: $('btn-double'), newGame: $('btn-new'), coach: $('coach'), matchInfo: $('match-info'),
   pipH: $('pip-human'), pipA: $('pip-ai'), pipDiff: $('pip-diff'), moves: $('moves'),
-  scoreH: $('score-human'), scoreA: $('score-ai'),
+  scoreH: $('score-human'), scoreA: $('score-ai'), scoreAName: $('score-ai-name'),
+  oppCard: $('opp-card'), oppBtn: $('btn-opp'), oppDialog: $('opp-dialog'), oppGrid: $('opp-grid'), myRating: $('my-rating'),
   chipH: $('chip-human'), chipA: $('chip-ai'), nameH: $('name-human'), nameA: $('name-ai'),
   viewButtons: document.querySelectorAll('[data-view]'),
 };
@@ -83,10 +89,14 @@ function canDouble(side) {
   if (isCrawford() || S.cube.owner === other(side) || S.cube.value >= 64) return false;
   return !isMatch() || S.cube.value < needs(side);
 }
-// AI 난이도(1..5)와 잡음용 난수 시드. 난이도가 낮을수록 사람처럼 실수한다(engine/src/level.rs).
-const aiLevel = () => Number(S.view.ai) || 5;
+// 상대 봇과 잡음용 난수 시드. 레이팅이 낮은 봇일수록 사람처럼 실수한다(engine/src/bots.rs).
+const oppBot = () => S.bots[S.opp];
+const botIndex = (id) => {
+  const i = S.bots.findIndex((b) => b.id === id);
+  return i >= 0 ? i : S.bots.findIndex((b) => b.id === DEFAULT_BOT);
+};
 const seed32 = () => crypto.getRandomValues(new Uint32Array(1))[0];
-const aiCube = (doubler) => call('ai_cube_json', S.board, doubler, aiLevel(), seed32(), ctx());
+const aiCube = (doubler) => call('ai_cube_json', S.board, doubler, S.opp, seed32(), ctx());
 const cubeDecision = (side) => call('cube_decision_json', S.board, side, ENGINE_NN, ctx());
 const actionName = { no_double: '노 더블', double_take: '더블/테이크', double_pass: '더블/패스', too_good: '너무 좋아서 노 더블(개먼 노림)' };
 
@@ -238,7 +248,17 @@ function renderPanel() {
   els.chipH.className = `chip ${tone(HUMAN)}`;
   els.chipA.className = `chip ${tone(AI)}`;
   els.nameH.textContent = `나 (${tone(HUMAN) === 'white' ? '백' : '흑'})`;
-  els.nameA.textContent = `AI (${tone(AI) === 'white' ? '백' : '흑'})`;
+  const bot = oppBot();
+  els.nameA.textContent = `${bot ? bot.name : 'AI'} (${tone(AI) === 'white' ? '백' : '흑'})`;
+  els.scoreAName.textContent = bot ? bot.name : 'AI';
+  if (bot) {
+    const next = S.bots[botIndex(S.view.ai)];
+    const pending = next && next !== bot ? `<p class="hint">다음 새 게임부터 ${escapeHtml(next.name)}(${next.rating})</p>` : '';
+    els.oppCard.innerHTML = `${avatarSvg(bot)}<div><b>${escapeHtml(bot.name)}</b> <span class="rating">${bot.rating}</span>
+      <p class="hint">${escapeHtml(bot.blurb)}</p>${pending}</div>`;
+  }
+  const r = S.rating;
+  els.myRating.textContent = `내 레이팅 ${Math.round(r.rating)}${r.games ? ` (${r.games}번 반영)` : ' (처음)'}`;
   for (const btn of els.viewButtons) {
     const [key, value] = btn.dataset.view.split(':');
     btn.setAttribute('aria-pressed', String(String(S.view[key]) === value));
@@ -298,7 +318,9 @@ function persist() {
   saveGame({
     id: S.gameId,
     date: new Date(S.gameId).toISOString(),
-    ai: `lv${aiLevel()}`,
+    ai: oppBot() ? oppBot().id : 'unknown',
+    aiName: oppBot() ? oppBot().name : null,
+    aiRating: oppBot() ? oppBot().rating : null,
     match: S.matchAtStart && S.matchAtStart.length ? S.matchAtStart : null,
     entries: S.history.map(({ grade, mark, ...rest }) => rest),
     result: S.result,
@@ -309,12 +331,18 @@ function persist() {
 function snapshot(dice) {
   return {
     board: S.board.slice(), dice, historyLen: S.history.length, lastMove: S.lastMove,
-    cube: clone(S.cube), match: clone(S.match), result: S.result, scoreTally: clone(S.score),
+    cube: clone(S.cube), match: clone(S.match), result: S.result, scoreTally: clone(S.score), rating: clone(S.rating),
   };
 }
 
 // ---------- 진행 ----------
 async function newGame() {
+  if (!S.bots.length) {
+    S.bots = await call('bots_json');
+    renderOppGrid();
+  }
+  S.opp = botIndex(S.view.ai);
+  S.view.ai = S.bots[S.opp].id;
   const board = await call('start_board');
   const want = Number(S.view.match) || 0;
   // 게임 방식이 바뀌었거나 매치가 끝났으면 새 매치. 같은 매치를 이어 가는데 직전 판이 크로포드 판이었으면 이제 크로포드 이후.
@@ -568,7 +596,7 @@ async function aiRollAndMove(dice = null) {
   render();
   await sleep(450);
   const before = S.board.slice();
-  const m = await call('ai_move_json', S.board, AI, dice[0], dice[1], aiLevel(), seed32(), ctx());
+  const m = await call('ai_move_json', S.board, AI, dice[0], dice[1], S.opp, seed32(), ctx());
   if (m.steps.length === 0) {
     setStatus(`AI ${dice[0]}-${dice[1]}: 둘 수 있는 수가 없어.`);
     await sleep(700);
@@ -609,7 +637,8 @@ async function endGame(winner, points, passed, mult = 1) {
     S.match.score[winner] = Math.min(S.match.length, S.match.score[winner] + points);
     const sc = `${S.match.score[HUMAN]} : ${S.match.score[AI]}`;
     if (matchOver()) {
-      setStatus(`${who}(${kind}, ${points}점). ${S.match.length}점 매치 ${sc}로 ${winner === HUMAN ? '내가' : 'AI가'} 매치를 이겼어. 새 게임을 누르면 새 매치야.`);
+      const rt = updateRating(winner === HUMAN, S.match.length);
+      setStatus(`${who}(${kind}, ${points}점). ${S.match.length}점 매치 ${sc}로 ${winner === HUMAN ? '내가' : 'AI가'} 매치를 이겼어. ${rt} 새 게임을 누르면 새 매치야.`);
     } else {
       setStatus(`${who}(${kind}, ${points}점). 매치 ${sc}. 다음 판을 눌러.`);
     }
@@ -617,10 +646,19 @@ async function endGame(winner, points, passed, mult = 1) {
     if (winner === HUMAN) S.score.human += points;
     else S.score.ai += points;
     storage.set('palamedes.score', S.score);
-    setStatus(`${who}. ${kind}${S.cube.value > 1 ? `, 큐브 ${S.cube.value}` : ''} → ${points}점. 분석 화면에서 복기할 수 있어.`);
+    const rt = updateRating(winner === HUMAN, 1);
+    setStatus(`${who}. ${kind}${S.cube.value > 1 ? `, 큐브 ${S.cube.value}` : ''} → ${points}점. ${rt} 분석 화면에서 복기할 수 있어.`);
   }
   persist();
   render();
+}
+
+// 판(머니) 또는 매치가 끝났을 때 내 레이팅 반영. 상대 레이팅은 봇 목표 레이팅.
+function updateRating(won, n) {
+  const r = rateResult(S.rating, oppBot().rating, won, n);
+  S.rating = { rating: r.rating, exp: r.exp, games: r.games };
+  storage.set('palamedes.rating', S.rating);
+  return `레이팅 ${r.delta >= 0 ? '+' : ''}${r.delta.toFixed(1)} → ${Math.round(r.rating)}.`;
 }
 
 function canUndo() {
@@ -647,6 +685,8 @@ async function onUndo() {
   S.match = clone(snap.match);
   S.score = clone(snap.scoreTally);
   storage.set('palamedes.score', S.score);
+  S.rating = clone(snap.rating);
+  storage.set('palamedes.rating', S.rating);
   S.result = null;
   S.cubeOffer = null;
   persist();
@@ -699,6 +739,35 @@ for (const btn of els.viewButtons) {
     render();
   });
 }
+// 상대 고르기 대화상자. 판이 시작 전이면 바로, 아니면 다음 새 게임부터 바뀐다.
+function renderOppGrid() {
+  els.oppGrid.innerHTML = S.bots
+    .map((b) => `<button type="button" class="opp-item" data-bot="${escapeHtml(b.id)}">${avatarSvg(b, 40)}
+      <span><b>${escapeHtml(b.name)}</b> <span class="rating">${b.rating}</span><br><span class="hint">${escapeHtml(b.blurb)}</span></span></button>`)
+    .join('');
+}
+els.oppBtn.addEventListener('click', () => {
+  for (const el of els.oppGrid.querySelectorAll('[data-bot]')) el.setAttribute('aria-pressed', String(el.dataset.bot === S.view.ai));
+  els.oppDialog.showModal();
+});
+els.oppGrid.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-bot]');
+  if (!t) return;
+  S.view.ai = t.dataset.bot;
+  storage.set('palamedes.view', S.view);
+  els.oppDialog.close();
+  const bot = S.bots[botIndex(S.view.ai)];
+  // 매치 도중(점수가 난 뒤)에는 상대를 바꾸지 않는다(매치 결과로 레이팅을 매기므로).
+  const fresh = S.phase === 'opening' && S.history.length === 0 && (!isMatch() || S.match.score.every((x) => x === 0));
+  if (fresh) {
+    S.opp = botIndex(S.view.ai);
+    setStatus(`상대는 ${bot.name}(${bot.rating})야. 굴리기를 눌러.`);
+  } else {
+    setStatus(`다음 새 게임부터 ${bot.name}(${bot.rating})와 둬.`);
+  }
+  render();
+});
+
 svg.addEventListener('click', (e) => {
   const t = e.target.closest('[data-point]');
   if (t) act.point(Number(t.dataset.point));

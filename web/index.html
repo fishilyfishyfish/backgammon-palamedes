@@ -13,7 +13,7 @@
     <div class="score" aria-label="점수">
       <span>나 <b id="score-human">0</b></span>
       <span class="sep">:</span>
-      <span><b id="score-ai">0</b> AI</span>
+      <span><b id="score-ai">0</b> <span id="score-ai-name">AI</span></span>
       <span id="match-info" class="match-info"></span>
     </div>
     <a class="btn ghost link" href="analysis.html">분석</a>
@@ -37,6 +37,12 @@
       </div>
 
       <section id="coach" class="coach" aria-live="polite" hidden></section>
+
+      <section class="opponent" aria-label="상대">
+        <div id="opp-card" class="opp-card"></div>
+        <button id="btn-opp" class="btn" type="button">상대 바꾸기</button>
+      </section>
+      <p id="my-rating" class="hint"></p>
 
       <dl class="pips">
         <div><dt><span id="chip-human" class="chip white"></span><span id="name-human">나 (백)</span></dt><dd id="pip-human">167</dd></div>
@@ -70,19 +76,18 @@
           <button type="button" class="seg-btn" data-view="match:5">5점</button>
           <button type="button" class="seg-btn" data-view="match:7">7점</button>
         </div>
-        <div class="seg" role="group" aria-label="난이도">
-          <span class="seg-label">난이도</span>
-          <button type="button" class="seg-btn" data-view="ai:1">1</button>
-          <button type="button" class="seg-btn" data-view="ai:2">2</button>
-          <button type="button" class="seg-btn" data-view="ai:3">3</button>
-          <button type="button" class="seg-btn" data-view="ai:4">4</button>
-          <button type="button" class="seg-btn" data-view="ai:5">5</button>
-        </div>
       </div>
 
-      <p class="hint foot">AI는 자기대국으로 학습한 신경망이야. 난이도 5는 상대의 응수까지 보고 최선을 두고(2수 탐색), 낮을수록 사람처럼 실수해. 비슷한 수끼리 헷갈리고, 맞힐 수 있으면 맞히고, 맞을 위험을 덜 신경 쓰는 식이야. 난이도는 바로 바뀌어. 말을 누르면 갈 수 있는 칸이 표시돼. 친절 모드에서는 힌트(수·큐브)를 볼 수 있고, 나쁨(에퀴티 0.08 손해) 이상인 수와 큐브 판단은 하기 전에 이유와 함께 알려 줘. 굴리기 전에 더블할 수 있어. 매치는 크로포드 규칙(한쪽이 처음 1점 남은 판은 큐브 금지)을 따라. 게임 방식은 다음 새 게임부터 바뀌어.</p>
+      <p class="hint foot">상대는 모두 자기대국으로 학습한 신경망이야. 팔라메데스는 엔진 그대로 두고, 레이팅이 낮은 상대일수록 사람처럼 실수해. 비슷한 수끼리 헷갈리거나 성격대로(맞히기 좋아함, 겁 많음 등) 둬. 상대를 바꾸면 다음 새 게임부터 적용돼. 말을 누르면 갈 수 있는 칸이 표시돼. 친절 모드에서는 힌트(수·큐브)를 볼 수 있고, 나쁨(에퀴티 0.08 손해) 이상인 수와 큐브 판단은 하기 전에 이유와 함께 알려 줘. 굴리기 전에 더블할 수 있어. 매치는 크로포드 규칙(한쪽이 처음 1점 남은 판은 큐브 금지)을 따라. 게임 방식은 다음 새 게임부터 바뀌어.</p>
     </aside>
   </main>
+
+  <dialog id="opp-dialog" class="opp-dialog" aria-labelledby="opp-title">
+    <h2 id="opp-title">상대 고르기</h2>
+    <p class="hint">레이팅은 FIBS 방식이야. 봇 레이팅은 봇끼리 수천 판을 둬서 맞춘 값이고, 가장 센 팔라메데스(엔진 그대로)를 1800으로 둔 상대 눈금이야. 내 레이팅은 1500에서 시작해서 판마다(매치면 매치가 끝날 때) 바뀌어.</p>
+    <div id="opp-grid" class="opp-grid"></div>
+    <form method="dialog"><button class="btn" type="submit">닫기</button></form>
+  </dialog>
 
   <script type="module" src="app.js"></script>
 </body>

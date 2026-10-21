@@ -78,7 +78,9 @@ for (let g = 0; g < games; g++) {
   // 판마다 설정(말 색, 홈 위치, 상대)을 바꿔 가며 둔다. 뒤집힌 판에서도 터치 영역이 맞는지 확인.
   await page.locator(`[data-view="color:${g % 2 ? 'black' : 'white'}"]`).click();
   await page.locator(`[data-view="home:${g % 4 >= 2 ? 'left' : 'right'}"]`).click();
-  await page.locator(`[data-view="ai:${['5', '3', '1'][g % 3]}"]`).click();
+  // 상대 고르기(새 게임 직후라 바로 적용).
+  await page.locator('#btn-opp').click();
+  await page.locator(`[data-bot="${['palamedes', 'minji', 'saessak'][g % 3]}"]`).click();
   // 두 번째 판은 3점 매치를 끝까지(여러 판), 나머지는 머니 게임 한 판.
   const matchMode = g === 1 ? '3' : '0';
   await page.locator(`[data-view="match:${matchMode}"]`).click();
@@ -174,6 +176,10 @@ for (let g = 0; g < games; g++) {
     throw new Error(`unexpected phase ${s.phase}`);
   }
 }
+const rating = await page.evaluate(() => window.__palamedes.state.rating);
+// 머니 판마다, 매치는 끝날 때 한 번 레이팅이 반영된다.
+if (rating.games !== games) throw new Error(`rating applied ${rating.games} times for ${games} games/matches`);
+console.log(`rating: ${Math.round(rating.rating)} after ${rating.games}`);
 console.log(`games: ${games}, results by points: ${JSON.stringify(tally)}, undos: ${undos}, keyboard moves: ${keyMoves}, hints: ${hints}, warnings: ${warnings}, doubles: ${doubles}, cube answers: ${answers}, cube warnings: ${cubeWarns}, match games: ${matchGames}`);
 
 // 분석 화면: 저장된 마지막 판을 끝까지 분석하고 수마다 결과가 있는지 확인.

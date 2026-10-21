@@ -31,13 +31,35 @@ export const storage = {
 
 // 화면 설정. color: 사람 말 색('white'|'black'), home: 사람 홈 위치('right'|'left'),
 // ai: 상대('nn' | 'baseline' | 'random'), coach: 친절 모드('on' | 'off'), match: 매치 길이('0' = 머니, '3' | '5' | '7').
-// ai: 난이도 '1'..'5'(5 = 엔진 그대로). 예전 값(nn | baseline | random)은 5 | 3 | 1로 읽는다.
-const OLD_AI = { nn: '5', baseline: '3', random: '1' };
+// ai: 상대 봇 id(engine/weights/bots.json). 예전 값(상대 nn | baseline | random, 난이도 '1'..'5')은 비슷한 봇으로 읽는다.
+// 없는 id면 app.js가 가장 센 봇으로 바꾼다.
+export const DEFAULT_BOT = 'palamedes';
+const OLD_AI = { nn: 'palamedes', baseline: 'minji', random: 'saessak', 5: 'palamedes', 4: 'jiu', 3: 'minji', 2: 'dalsu', 1: 'saessak' };
 export function loadView() {
-  const v = { color: 'white', home: 'right', ai: '5', coach: 'on', match: '0', ...storage.get('palamedes.view', {}) };
+  const v = { color: 'white', home: 'right', ai: DEFAULT_BOT, coach: 'on', match: '0', ...storage.get('palamedes.view', {}) };
   if (OLD_AI[v.ai]) v.ai = OLD_AI[v.ai];
-  if (!['1', '2', '3', '4', '5'].includes(v.ai)) v.ai = '5';
   return v;
+}
+
+// ---------- 레이팅(FIBS 방식) ----------
+// 레이팅이 diff만큼 높은 쪽이 n점 매치(머니 게임 한 판은 n = 1)를 이길 확률. 엔진 bots::win_prob와 같은 식.
+export const fibsWinProb = (diff, n) => 1 / (1 + 10 ** ((-diff * Math.sqrt(n)) / 2000));
+export const RATING_START = 1500;
+// 이긴 쪽은 4·√n·(1 − 이길 확률)만큼 오른다. 경험(지금까지 둔 점수 합) 400 전에는 최대 5배로 빨리 움직인다.
+export function rateResult(me, oppRating, won, n) {
+  const p = fibsWinProb(me.rating - oppRating, n);
+  const boost = Math.max(1, 5 - me.exp / 100);
+  const delta = 4 * Math.sqrt(n) * boost * (won ? 1 - p : -p);
+  return { rating: me.rating + delta, exp: me.exp + n, games: (me.games || 0) + 1, delta };
+}
+
+// 봇 아바타: 이름 첫 글자를 레이팅에 따라 색이 바뀌는 원 안에(외부 그림 없음).
+export function avatarSvg(bot, size = 44) {
+  const hue = Math.round(200 - ((bot.rating - 900) / 900) * 200);
+  return `<svg class="avatar" width="${size}" height="${size}" viewBox="0 0 44 44" aria-hidden="true">
+    <circle cx="22" cy="22" r="21" fill="hsl(${hue} 55% 45%)" stroke="hsl(${hue} 60% 30%)" stroke-width="2"/>
+    <text x="22" y="23" text-anchor="middle" dominant-baseline="middle" font-size="18" font-weight="700" fill="#fff">${escapeHtml(bot.name[0])}</text>
+  </svg>`;
 }
 
 // 엔진 Worker와 {id, fn, args} RPC.
@@ -141,7 +163,9 @@ function cleanGame(g, n) {
   const result = r && isInt(r.winner, 0, 1) && isInt(r.points, 1, 192) ? { winner: r.winner, points: r.points, passed: !!r.passed } : null;
   const match = cleanMatch(g.match, `${n}번째 판`);
   const date = typeof g.date === 'string' && !Number.isNaN(Date.parse(g.date)) ? g.date : new Date().toISOString();
-  return { id: Number.isFinite(g.id) ? g.id : Date.parse(date), date, ai: typeof g.ai === 'string' ? g.ai : 'unknown', match, entries, result };
+  const aiName = typeof g.aiName === 'string' ? g.aiName.slice(0, 40) : null;
+  const aiRating = Number.isFinite(g.aiRating) ? g.aiRating : null;
+  return { id: Number.isFinite(g.id) ? g.id : Date.parse(date), date, ai: typeof g.ai === 'string' ? g.ai : 'unknown', aiName, aiRating, match, entries, result };
 }
 
 // 파일 내용 → 게임 목록. 형식이 틀리면 이유를 담은 Error.

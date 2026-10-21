@@ -1,9 +1,9 @@
-//! 난이도별 실수 분포: 난이도 플레이어가 신경망 1수와 둔 판에서, 난이도 쪽 수마다 손실(1수 최선 − 둔 수)을 모아
+//! 봇별 실수 분포: 봇이 신경망 1수와 둔 판에서, 봇 쪽 수마다 손실(1수 최선 − 둔 수)을 모아
 //! 등급 비율과 "쉬운 국면(1·2위 차이 ≥ 0.1)" / "어려운 국면(< 0.02)"의 실수율을 본다.
-//! `cargo run --release --example levels -- [판 수]`
+//! `cargo run --release --example bot_mistakes -- [판 수]`
 
 use palamedes::board::{Board, Side};
-use palamedes::level::{choose_move, level};
+use palamedes::bots::{bots, choose_move};
 use palamedes::nn::NnEval;
 use palamedes::rng::Rng;
 use palamedes::search::{best_move, rank_moves};
@@ -14,10 +14,12 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(200);
     let e = NnEval::embedded();
-    println!("level | moves | best | <0.04 | ?! | ? | ?? | mean loss | error rate easy / hard");
-    for lv in 1..=5u8 {
-        let l = level(lv);
-        let mut rng = Rng::new(lv as u64);
+    println!(
+        "bot (rating) | moves | best | <0.04 | ?! | ? | ?? | mean loss | error rate easy / hard"
+    );
+    for (bi, bot) in bots().iter().enumerate() {
+        let l = bot.style;
+        let mut rng = Rng::new(bi as u64);
         let (mut n, mut grades, mut sum) = (0u32, [0u32; 5], 0.0f64);
         let (mut easy, mut easy_err, mut hard, mut hard_err) = (0u32, 0u32, 0u32, 0u32);
         for g in 0..games {
@@ -64,7 +66,9 @@ fn main() {
         }
         let pct = |x: u32| 100.0 * x as f64 / n as f64;
         println!(
-            "lv{lv} | {n} | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.4} | {:.1}% / {:.1}%",
+            "{} ({}) | {n} | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.4} | {:.1}% / {:.1}%",
+            bot.name,
+            bot.rating,
             pct(grades[0]),
             pct(grades[1]),
             pct(grades[2]),

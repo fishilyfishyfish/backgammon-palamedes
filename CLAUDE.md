@@ -53,7 +53,7 @@ cd engine && cargo fmt --check && cargo clippy --all-targets -- -D warnings && c
 # 성능 측정
 cd engine && cargo run --release --example bench
 
-# 강도 측정(미러 대국, 4스레드): 플레이어 random | hand | nn(포함된 가중치) | nn:<경로> | lv1..lv5 | lv:<잡음>:<습관>, 뒤에 @2 = 2수(@2f = 거르기 없음)
+# 강도 측정(미러 대국, 4스레드): 플레이어 random | hand | nn(포함된 가중치) | nn:<경로> | bot:<id> | lv:<잡음>:<습관 배율>, 뒤에 @2 = 2수(@2f = 거르기 없음)
 cd engine && cargo run --release --example match -- nn@2 nn 2500
 # TD(λ) 자기대국 학습 (key=value: games, hidden, lambda, lr, lr_end, threads, eval_every, eval_pairs, out, init)
 cd engine && cargo run --release --example train -- games=2000000 lr=0.02 lr_end=0.001 out=weights/td-new.bin
@@ -66,8 +66,10 @@ cd engine && cargo run --release --example cubematch -- money janowski never 200
 cd engine && cargo run --release --example cubematch -- match janowski money 7 300
 # 신경망 보정 검사: 자기대국 국면 400개의 1수 예측 vs 롤아웃 1296회
 cd engine && cargo run --release --example calibrate -- 400 1296
-# 난이도별 실수 분포(등급 비율, 쉬운/어려운 국면 실수율)
-cd engine && cargo run --release --example levels -- 300
+# 봇별 실수 분포(등급 비율, 쉬운/어려운 국면 실수율)
+cd engine && cargo run --release --example bot_mistakes -- 300
+# 봇 레이팅 맞추기(잡음 이분 탐색, bots.json 갱신)
+cd engine && cargo run --release --example calibrate_bots -- 1000 3000 weights/bots.json
 # 계산한 매치 에퀴티 표 출력
 cd engine && cargo run --release --example met -- 9
 # 시작 국면 15가지 주사위의 선택과 상위 후보 (hand | nn | nn:<경로>)
@@ -105,12 +107,12 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `engine/src/nn.rs` | 신경망 `Net`(입력 인코딩 `encode`/손 특징 `encode_ext`, 희소 순전파·역전파, PNN1 저장 형식), `NnEval`(포함된 가중치) |
 | `engine/src/train.rs` | TD(λ) 자기대국: `self_play_game`(λ-리턴 표본), `train_round`(병렬 라운드) |
 | `engine/weights/` | `td.bin`(신경망 가중치), `surrogate.json`(설명용 대리 모델), `logs/`(학습 기록). 둘 다 엔진에 포함 |
-| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인), `fit_surrogate`, `cubematch`(큐브 정책), `met`(MET 출력), `calibrate`(신경망 보정 검사), `levels`(난이도별 실수 분포) |
+| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인), `fit_surrogate`, `cubematch`(큐브 정책), `met`(MET 출력), `calibrate`(신경망 보정 검사), `bot_mistakes`(봇별 실수 분포), `calibrate_bots`(봇 레이팅 맞추기) |
 | `engine/src/analysis.rs` | 실수 등급 `Grade`(gnubg 기본 임계값), `analyze_move`, `hint` |
 | `engine/src/explain.rs` | 설명 층: 대리 모델 입력 `surrogate_inputs`, `Surrogate`(포함된 가중치), 주제별 기여도 `explain`, 템플릿 문장 |
 | `engine/src/cube.rs` | 큐브: Janowski 큐브 에퀴티, 머니 판단 `money_decision`, 국면 → 판단 `decide`, 근거 문장 `cube_reasons`, `CubeState` |
 | `engine/src/matchplay.rs` | 매치: 계산한 MET(`Met`), 점수 상황 `MatchCtx`(죽은 큐브 MWC, EMG, 큐브 있는 MWC, 큐브 판단) |
-| `engine/src/level.rs` | 난이도 1~5: `Level`(깊이·잡음·습관·큐브 잡음), `choose_move`, `cube_choice`, `LevelPlayer` |
+| `engine/src/bots.rs` | 레이팅별 봇: `Bot`·`Style`(깊이·잡음·습관 배율·큐브 잡음), `weights/bots.json`, `choose_move`, `cube_choice`, FIBS `win_prob`, `BotPlayer` |
 | `engine/src/rollout.rs` | 롤아웃(층화·공통 난수, 구간별 호출) |
 | `engine/src/wasm.rs` | 웹 바인딩. 상태 없음: 52칸 판 배열 + JSON(큐브·매치는 `ctx_json`) |
 | `engine/tests/` | 규칙(`rules.rs`), 특징값(`features.rs`), 무작위 자기대국 불변식(`selfplay.rs`), 평가·탐색(`eval.rs`), 신경망·학습(`nn.rs`), 분석·설명(`analysis.rs`), 큐브·MET(`cube.rs`), 롤아웃·신경망 큐브 판단(`rollout.rs`) |
@@ -341,7 +343,8 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
     더블할 수 있었는데 안 했고 엔진은 더블) 표시 `D?`, 진영별 큐브 실수 요약, 수마다 롤아웃 버튼.
   - 무르기는 큐브·매치 점수·머니 누적 점수까지 직전 내 턴 시작으로 되돌린다.
 
-### 난이도 (1~5)
+### 난이도 (1~5) → 레이팅별 봇으로 바뀌는 중
+- 아래 1~5단계 방식(잡음 + 습관)을 봇마다 다른 습관 배율로 일반화해 `bots.rs`로 옮겼다. 봇 레이팅 보정 결과와 함께 이 절을 고쳐 쓸 것.
 - 요구: 난이도가 낮으면 사람답게 실수해야 한다. 그래서 무작위 수(랜덤 AI)나 얕은 탐색이 아니라 엔진 평가에 두 가지를 섞는다(`level.rs`).
   1. **잡음**: 후보마다 에퀴티에 정규분포 잡음을 더해 가장 큰 수를 둔다(gnubg의 noise 방식). 비슷한 수끼리 자주 바뀌고 큰 실수는 드물며,
      후보가 엇비슷한 어려운 국면일수록 실수가 잦다.

@@ -4,7 +4,7 @@ import init, * as engine from './pkg/palamedes.js';
 const ready = init();
 
 // JSON을 돌려주는 함수는 여기서 파싱해서 넘긴다.
-const JSON_FNS = new Set(['legal_moves_json', 'turn_state_json', 'features_json', 'result_json', 'rank_moves_json', 'analyze_move_json', 'hint_json', 'cube_decision_json', 'rollout_json', 'met_json', 'ai_move_json', 'ai_cube_json']);
+const JSON_FNS = new Set(['legal_moves_json', 'turn_state_json', 'features_json', 'result_json', 'rank_moves_json', 'analyze_move_json', 'hint_json', 'cube_decision_json', 'rollout_json', 'met_json', 'ai_move_json', 'ai_cube_json', 'bots_json']);
 
 self.onmessage = async (e) => {
   const { id, fn, args } = e.data;

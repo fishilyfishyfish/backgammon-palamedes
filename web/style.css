@@ -107,7 +107,7 @@ button { font: inherit; }
 
 .topbar .sub { color: var(--muted); font-weight: 500; }
 
-.score { display: flex; gap: 6px; align-items: baseline; font-variant-numeric: tabular-nums; }
+.score { display: flex; gap: 6px; align-items: baseline; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .score .sep { color: var(--muted); }
 
 .app {
@@ -375,4 +375,32 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 @media (max-width: 480px) {
   .topbar { gap: 8px; }
   .topbar .sub { display: none; }
+  /* 봇 이름은 패널에 있으니 좁은 화면 점수 줄에서는 뺀다. */
+  #score-ai-name { display: none; }
 }
+
+/* 상대(봇) */
+.opponent { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.opp-card { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.opp-card .hint, .opp-item .hint { margin: 2px 0 0; }
+.rating { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+.avatar { flex: none; }
+.opp-dialog {
+  max-width: min(560px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 16px;
+}
+.opp-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.opp-dialog h2 { margin: 0 0 6px; font-size: 1.1rem; }
+.opp-grid { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 10px 0; max-height: 60vh; overflow-y: auto; }
+.opp-item {
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  padding: 8px 10px; min-height: 48px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); color: inherit; font: inherit; cursor: pointer;
+}
+.opp-item[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.opp-item:focus-visible { outline: 3px solid var(--select); outline-offset: 1px; }

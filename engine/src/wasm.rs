@@ -338,14 +338,14 @@ pub fn cube_decision_json(
     }))
 }
 
-/// 난이도(1..=5)대로 AI가 둘 수(신경망). `seed`는 잡음용 난수 시드(호출마다 다르게). 결과는 `MoveSummary` 하나.
+/// 봇(`bots_json`의 번호)이 둘 수(신경망). `seed`는 잡음용 난수 시드(호출마다 다르게). 결과는 `MoveSummary` 하나.
 #[wasm_bindgen]
 pub fn ai_move_json(
     board: &[u8],
     side: u8,
     d1: u8,
     d2: u8,
-    level: u8,
+    bot: u8,
     seed: u32,
     ctx_json: &str,
 ) -> Result<String, JsError> {
@@ -353,18 +353,18 @@ pub fn ai_move_json(
     dice_arg(d1, d2)?;
     let (cube, score) = ctx_arg(ctx_json)?;
     let ctx = score.and_then(|m| m.ctx(s, cube.value));
-    let lv = crate::level::level(level);
+    let st = crate::bots::bot(bot as usize).style;
     let mut rng = crate::rng::Rng::new(seed as u64 ^ 0x9E37_79B9);
-    let m = crate::level::choose_move(&engine_arg(1)?, &b, s, d1, d2, &lv, ctx, &mut rng);
+    let m = crate::bots::choose_move(&engine_arg(1)?, &b, s, d1, d2, &st, ctx, &mut rng);
     Ok(to_json(&MoveSummary::from(&m)))
 }
 
-/// 난이도대로 AI 큐브 판단(신경망). `side`는 더블하는 쪽. `{double, take}`: 더블할지, 상대가 받을지.
+/// 봇의 큐브 판단(신경망). `side`는 더블하는 쪽. `{double, take}`: 더블할지, 상대가 받을지.
 #[wasm_bindgen]
 pub fn ai_cube_json(
     board: &[u8],
     side: u8,
-    level: u8,
+    bot: u8,
     seed: u32,
     ctx_json: &str,
 ) -> Result<String, JsError> {
@@ -373,13 +373,20 @@ pub fn ai_cube_json(
     let ctx = score.and_then(|m| m.ctx(s, cube.value));
     let d = decide(&engine_arg(1)?, &b, s, cube, ctx);
     let mut rng = crate::rng::Rng::new(seed as u64 ^ 0x7F4A_7C15);
-    let (double, take) = crate::level::cube_choice(&d, &crate::level::level(level), &mut rng);
+    let st = crate::bots::bot(bot as usize).style;
+    let (double, take) = crate::bots::cube_choice(&d, &st, &mut rng);
     #[derive(Serialize)]
     struct Out {
         double: bool,
         take: bool,
     }
     Ok(to_json(&Out { double, take }))
+}
+
+/// 봇 목록(레이팅 오름차순): 번호는 배열 순서.
+#[wasm_bindgen]
+pub fn bots_json() -> String {
+    to_json(&crate::bots::bots())
 }
 
 /// 롤아웃: `after`(`mover`가 둔 뒤 국면)에서 시행 [start, start + trials). 후보끼리 같은 `seed`를 쓰면 같은 주사위.

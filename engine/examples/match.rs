@@ -1,7 +1,7 @@
 //! 미러 대국으로 두 플레이어의 강도를 비교한다(4스레드).
 //! `cargo run --release --example match -- <A> <B> [쌍 수] [시드]`
 //! 플레이어: random, hand(손 평가 1수 탐색), nn(포함된 가중치 1수 탐색), nn:<경로>(가중치 파일),
-//!         lv1..lv5(난이도, 포함된 가중치), lv:<잡음>:<습관>(1수 난이도 조정용), 뒤에 @2를 붙이면 2수 탐색(예: nn@2, hand@2), @2f는 후보를 거르지 않는 2수
+//!         bot:<id>(봇, weights/bots.json), lv:<잡음>:<습관 배율>(1수, 기본 습관에 배율, 조정용), 뒤에 @2를 붙이면 2수 탐색(예: nn@2, hand@2), @2f는 후보를 거르지 않는 2수
 
 use std::time::Instant;
 
@@ -39,11 +39,14 @@ fn maker(spec: &str, seed: u64) -> impl Fn(usize) -> Box<dyn Player> + Sync {
     move |t| -> Box<dyn Player> {
         match name.as_str() {
             "random" => Box::new(RandomPlayer::new(seed ^ 0xABCDEF ^ t as u64)),
-            lv if lv.starts_with("lv") => Box::new(palamedes::level::LevelPlayer {
-                eval: NnEval::embedded(),
-                level: level_spec(lv),
-                rng: palamedes::rng::Rng::new(seed ^ 0x1E7E1 ^ t as u64),
-            }),
+            b if b.starts_with("bot:") || b.starts_with("lv:") => {
+                Box::new(palamedes::bots::BotPlayer {
+                    eval: NnEval::embedded(),
+                    style: bot_spec(b),
+                    label: label.clone(),
+                    rng: palamedes::rng::Rng::new(seed ^ 0x1E7E1 ^ t as u64),
+                })
+            }
             "hand" if ply < 2 => Box::new(OnePly::new(HandEval::default(), &label)),
             "hand" => Box::new(Searcher {
                 eval: HandEval::default(),
@@ -68,20 +71,22 @@ fn maker(spec: &str, seed: u64) -> impl Fn(usize) -> Box<dyn Player> + Sync {
     }
 }
 
-/// lv3 또는 lv:<잡음>:<습관>(1수, 조정 실험용).
-fn level_spec(spec: &str) -> palamedes::level::Level {
-    match spec.strip_prefix("lv:") {
-        Some(rest) => {
-            let (n, h) = rest.split_once(':').expect("lv:<noise>:<habit>");
-            palamedes::level::Level {
-                level: 0,
-                ply: 1,
-                noise: n.parse().unwrap(),
-                habit: h.parse().unwrap(),
-                cube_noise: 0.0,
-            }
-        }
-        None => palamedes::level::level(spec[2..].parse().expect("lv1..lv5")),
+/// bot:<id> 또는 lv:<잡음>:<습관 배율>(1수, 모든 기본 습관에 같은 배율).
+fn bot_spec(spec: &str) -> palamedes::bots::Style {
+    if let Some(id) = spec.strip_prefix("bot:") {
+        return palamedes::bots::bots()
+            .iter()
+            .find(|b| b.id == id)
+            .unwrap_or_else(|| panic!("unknown bot {id}"))
+            .style;
+    }
+    let (n, h) = spec[3..].split_once(':').expect("lv:<noise>:<habit>");
+    let h: f32 = h.parse().unwrap();
+    palamedes::bots::Style {
+        ply: 1,
+        noise: n.parse().unwrap(),
+        habits: [h; 6],
+        cube_noise: 0.0,
     }
 }
 

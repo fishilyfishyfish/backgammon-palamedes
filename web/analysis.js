@@ -46,7 +46,8 @@ function gameLabel(g) {
   const when = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   const res = g.result ? `${g.result.winner === HUMAN ? '내 승' : 'AI 승'} ${g.result.points}점${g.result.passed ? '(포기)' : ''}` : '진행 중';
   const m = g.match ? `${g.match.length}점 매치 ${g.match.score[HUMAN]}:${g.match.score[AI]} · ` : '';
-  return `${when} · ${m}${res} · ${g.entries.length}수`;
+  const vs = g.aiName ? `vs ${g.aiName}${g.aiRating ? `(${g.aiRating})` : ''} · ` : '';
+  return `${when} · ${vs}${m}${res} · ${g.entries.length}수`;
 }
 
 function fillSelect() {
