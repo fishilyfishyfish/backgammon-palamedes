@@ -294,6 +294,8 @@ pub struct TurnState {
     /// 수가 완성되었는가.
     pub done: bool,
     pub options: Vec<TurnOption>,
+    /// 지금 둘 수 있는 한 걸음 전부(쓴 눈 `die`가 다르면 따로). 웹의 "누르면 바로 이동" 입력이 눈을 골라 쓴다.
+    pub next: Vec<Step>,
 }
 
 /// 같은 (from, to)로 가는 경로가 여럿이면 중간에 맞히는 횟수가 적은 것, 그다음 걸음이 적은 것을 고른다.
@@ -308,7 +310,7 @@ pub fn turn_options(
     let first = next_steps(start, side, d1, d2, played)?;
     let mut options: Vec<TurnOption> = Vec::new();
     let mut path: Vec<Step> = played.to_vec();
-    for s in first {
+    for &s in &first {
         path.push(s);
         collect_chain(start, side, d1, d2, &mut path, played.len(), &mut options);
         path.pop();
@@ -318,6 +320,7 @@ pub fn turn_options(
         played: played.len(),
         done: played.len() >= need,
         options,
+        next: first,
     })
 }
 

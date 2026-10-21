@@ -46,7 +46,9 @@ const state = () => page.evaluate(() => {
     phase: S.phase, busy: S.busy, selected: S.selected, result: S.result,
     options: S.ts ? S.ts.options.map((o) => [o.from, o.to]) : [], done: S.ts ? S.ts.done : false,
     groups: S.groups.length, history: S.history.length, stack: S.undoStack.length,
-    focus: S.focus, warning: !!S.warning, hint: !!S.hint, cubeWarn: !!S.cubeWarn, cubeOffer: !!S.cubeOffer,
+    focus: S.focus, next: S.ts ? S.ts.next.map((x) => [x.from, x.die]) : [], remaining: window.__palamedes.remaining(),
+    lastDie: S.groups.length ? S.groups[S.groups.length - 1][0].die : null, input: S.view.input,
+    warning: !!S.warning, hint: !!S.hint, cubeWarn: !!S.cubeWarn, cubeOffer: !!S.cubeOffer,
     canDouble: !document.getElementById('btn-double').disabled,
     match: S.match, matchOver: !!(S.match && S.match.length && S.match.score.some((x) => x >= S.match.length)),
   };
@@ -70,6 +72,8 @@ let undos = 0;
 let warnings = 0;
 let hints = 0;
 let keyMoves = 0;
+let swaps = 0;
+let tapMoves = 0;
 for (let g = 0; g < games; g++) {
   if (g > 0) {
     await page.locator('#btn-new').click();
@@ -83,6 +87,8 @@ for (let g = 0; g < games; g++) {
   await page.locator(`[data-bot="${['palamedes', 'minji', 'saessak'][g % 3]}"]`).click();
   // 두 번째 판은 3점 매치를 끝까지(여러 판), 나머지는 머니 게임 한 판.
   const matchMode = g === 1 ? '3' : '0';
+  // 입력 방식: 짝수 판은 바로 이동(기본), 홀수 판은 칸 고르기.
+  await page.locator(`[data-view="input:${g % 2 ? 'pick' : 'tap'}"]`).click();
   await page.locator(`[data-view="match:${matchMode}"]`).click();
   await waitIdle();
   for (let guard = 0; guard < 6000; guard++) {
@@ -149,6 +155,35 @@ for (let g = 0; g < games; g++) {
         await page.locator('#btn-done').click();
         continue;
       }
+      if (s.input === 'tap') {
+        // 바로 이동: 걸음 하나를 고르고, 그 눈이 왼쪽이 아니면 주사위를 눌러 순서를 바꾼 뒤 말을 누른다.
+        const [from, die] = s.next[Math.floor(Math.random() * s.next.length)];
+        if (s.remaining[0] !== die && s.remaining.length === 2) {
+          await page.locator('[data-dice]').click();
+          await waitIdle();
+          swaps++;
+          if ((await state()).remaining[0] !== die) throw new Error('dice swap did not change the left die');
+        }
+        // 왼쪽 눈으로 이 말을 못 움직이면 오른쪽 눈이 쓰인다.
+        const left = (await state()).remaining;
+        const expect = left.find((d) => s.next.some(([f, dd]) => f === from && dd === d));
+        if (Math.random() < 0.25) {
+          keyMoves++;
+          await page.evaluate(() => document.activeElement && document.activeElement.blur());
+          for (let i = 0; i < 30 && (await state()).focus !== from; i++) await page.keyboard.press('ArrowRight');
+          if ((await state()).focus !== from) throw new Error(`keyboard focus never reached ${from}`);
+          await page.keyboard.press('Enter');
+        } else {
+          await tap(from);
+        }
+        await waitIdle();
+        tapMoves++;
+        const after = await state();
+        if (after.groups !== s.groups + 1 || after.lastDie !== expect) {
+          throw new Error(`tap ${from} (die ${expect}) not applied: ${JSON.stringify(after)}`);
+        }
+        continue;
+      }
       const [from, to] = s.options[Math.floor(Math.random() * s.options.length)];
       if (Math.random() < 0.25) {
         // 키보드로 두기: 화살표로 칸을 돌다가 Enter.
@@ -180,7 +215,7 @@ const rating = await page.evaluate(() => window.__palamedes.state.rating);
 // 머니 판마다, 매치는 끝날 때 한 번 레이팅이 반영된다.
 if (rating.games !== games) throw new Error(`rating applied ${rating.games} times for ${games} games/matches`);
 console.log(`rating: ${Math.round(rating.rating)} after ${rating.games}`);
-console.log(`games: ${games}, results by points: ${JSON.stringify(tally)}, undos: ${undos}, keyboard moves: ${keyMoves}, hints: ${hints}, warnings: ${warnings}, doubles: ${doubles}, cube answers: ${answers}, cube warnings: ${cubeWarns}, match games: ${matchGames}`);
+console.log(`games: ${games}, results by points: ${JSON.stringify(tally)}, undos: ${undos}, tap moves: ${tapMoves}, dice swaps: ${swaps}, keyboard moves: ${keyMoves}, hints: ${hints}, warnings: ${warnings}, doubles: ${doubles}, cube answers: ${answers}, cube warnings: ${cubeWarns}, match games: ${matchGames}`);
 
 // 분석 화면: 저장된 마지막 판을 끝까지 분석하고 수마다 결과가 있는지 확인.
 // 같은 페이지(localStorage 공유)에서 분석 화면으로 이동.

@@ -36,6 +36,8 @@ const S = {
   groups: [], // 이번 턴에 둔 선택지별 걸음 묶음(무르기 단위)
   ts: null, // 엔진 turn_state
   selected: null,
+  // "바로 이동" 입력에서 주사위 순서를 바꿨는가(왼쪽 주사위를 먼저 쓴다).
+  swap: false,
   // 키보드로 고른 칸(화살표로 이동, Enter·Space로 누름). 지금 누를 수 있는 칸이 아니면 render에서 지운다.
   focus: null,
   history: [], // 수 {side, dice, notation, before, after, cube, grade?, mark?} | 큐브 {type: 'cube', side, action, board, cube, grade?, mark?}
@@ -101,8 +103,19 @@ const cubeDecision = (side) => call('cube_decision_json', S.board, side, ENGINE_
 const actionName = { no_double: '노 더블', double_take: '더블/테이크', double_pass: '더블/패스', too_good: '너무 좋아서 노 더블(개먼 노림)' };
 
 // 지금 누를 수 있는 칸: 출발점을 안 골랐으면 출발점들, 골랐으면 그 도착점들. 바 → 높은 포인트 → 베어오프 순.
+// 입력 방식: 'tap'(기본) = 말을 누르면 왼쪽 주사위만큼 바로 이동, 'pick' = 말을 고른 뒤 도착 칸을 누름.
+const tapMode = () => S.view.input !== 'pick';
+// 화면 순서대로 아직 안 쓴 주사위 눈(왼쪽부터).
+function diceOrder() {
+  return S.swap ? [S.dice[1], S.dice[0]] : S.dice;
+}
+function remainingDice() {
+  return diceList(diceOrder(), flatSteps(S.groups)).filter((f) => !f.used).map((f) => f.d);
+}
+
 function pressable() {
   if (S.phase !== 'move' || !S.ts || S.warning) return [];
+  if (tapMode()) return [...new Set(S.ts.next.map((s) => s.from))].sort((a, b) => b - a);
   const opts = S.ts.options;
   const list = S.selected === null ? opts.map((o) => o.from) : opts.filter((o) => o.from === S.selected).map((o) => o.to);
   return [...new Set(list)].sort((a, b) => b - a);
@@ -115,7 +128,8 @@ function moveFocus(delta) {
   const i = list.indexOf(S.focus);
   S.focus = list[i < 0 ? (delta > 0 ? 0 : list.length - 1) : (i + delta + list.length) % list.length];
   const what = S.selected === null ? '움직일 말' : `${pointName(S.selected)}에서 갈 칸`;
-  setStatus(`${what}: ${pointName(S.focus)} (${list.indexOf(S.focus) + 1}/${list.length}). Enter로 고르고, Esc로 취소.`);
+  const how = tapMode() ? `Enter로 왼쪽 주사위(${remainingDice()[0]})만큼 이동, S로 주사위 순서 바꾸기.` : 'Enter로 고르고, Esc로 취소.';
+  setStatus(`${what}: ${pointName(S.focus)} (${list.indexOf(S.focus) + 1}/${list.length}). ${how}`);
   render();
 }
 
@@ -123,7 +137,7 @@ function render() {
   if (!S.board) return;
   const moving = S.phase === 'move' && S.ts;
   const selectable = new Set(moving ? S.ts.options.map((o) => o.from) : []);
-  const dests = moving && S.selected !== null ? S.ts.options.filter((o) => o.from === S.selected).map((o) => o.to) : [];
+  const dests = moving && S.selected !== null && !tapMode() ? S.ts.options.filter((o) => o.from === S.selected).map((o) => o.to) : [];
   if (S.focus !== null && !pressable().includes(S.focus)) S.focus = null;
   renderBoard(svg, {
     board: S.board,
@@ -132,7 +146,13 @@ function render() {
     selected: S.selected,
     dests,
     opening: S.phase === 'opening' ? S.openingDice : null,
-    dice: S.dice && S.phase !== 'opening' ? { side: S.turn, list: diceList(S.dice, S.phase === 'move' ? flatSteps(S.groups) : []) } : null,
+    dice: S.dice && S.phase !== 'opening'
+      ? {
+        side: S.turn,
+        list: diceList(S.phase === 'move' ? diceOrder() : S.dice, S.phase === 'move' ? flatSteps(S.groups) : []),
+        swappable: moving && tapMode() && !S.warning && S.dice[0] !== S.dice[1] && remainingDice().length === 2,
+      }
+      : null,
     lastMove: S.phase !== 'move' ? S.lastMove : null,
     // 힌트는 아직 아무것도 안 뒀을 때만 판에 그린다(턴 시작 기준 수라서).
     hint: S.hint && S.phase === 'move' && S.groups.length === 0 ? { steps: S.hint.best.steps } : null,
@@ -398,7 +418,7 @@ async function onRoll(force = false) {
 
 async function beginHumanTurn(dice, keepStatus = false) {
   S.undoStack.push(snapshot(dice));
-  Object.assign(S, { turn: HUMAN, dice, turnStart: S.board.slice(), groups: [], selected: null, phase: 'move', hint: null, cubeHint: null, warning: null });
+  Object.assign(S, { turn: HUMAN, dice, turnStart: S.board.slice(), groups: [], selected: null, swap: false, phase: 'move', hint: null, cubeHint: null, warning: null });
   await refreshTurn(keepStatus);
 }
 
@@ -410,16 +430,34 @@ async function refreshTurn(keepStatus = false) {
     if (S.ts.need === 0) setStatus(`${S.dice[0]}-${S.dice[1]}: 둘 수 있는 수가 없어. 턴 끝내기를 눌러.`);
     else if (S.ts.done) setStatus(`수 완성: ${S.ts.notation}. 턴 끝내기를 누르거나 무르기로 바꿔.`);
     else if (S.selected !== null) setStatus('초록색 칸 중 하나를 눌러.');
-    else setStatus(`${S.dice[0]}-${S.dice[1]}: 움직일 말을 눌러. (${S.ts.played}/${S.ts.need})`);
+    else if (tapMode()) {
+      const [l, r] = remainingDice();
+      const swap = r !== undefined && r !== l ? ' 주사위를 누르면 순서가 바뀌어.' : '';
+      setStatus(`${S.dice[0]}-${S.dice[1]}: 말을 누르면 왼쪽 주사위(${l})만큼 가.${swap} (${S.ts.played}/${S.ts.need})`);
+    } else setStatus(`${S.dice[0]}-${S.dice[1]}: 움직일 말을 눌러. (${S.ts.played}/${S.ts.need})`);
   }
-  // 고를 수 있는 출발점이 하나뿐이면 미리 선택해 준다.
+  // 칸 고르기 입력에서 고를 수 있는 출발점이 하나뿐이면 미리 선택해 준다.
   const froms = new Set(S.ts.options.map((o) => o.from));
-  if (froms.size === 1 && S.selected === null) S.selected = [...froms][0];
+  if (!tapMode() && froms.size === 1 && S.selected === null) S.selected = [...froms][0];
   render();
 }
 
 async function onPoint(p) {
   if (S.phase !== 'move' || !S.ts || S.warning) return;
+  if (tapMode()) {
+    // 왼쪽 주사위로 갈 수 있으면 그 눈, 아니면 오른쪽 눈(규칙상 못 쓰는 눈은 엔진이 next에서 이미 뺐다).
+    const left = remainingDice();
+    const step = left.map((d) => S.ts.next.find((s) => s.from === p && s.die === d)).find(Boolean);
+    if (step) {
+      S.groups.push([step]);
+      await refreshTurn();
+    } else if (S.ts.next.length) {
+      const mine = p === BAR ? S.board[BAR] > 0 : p >= 1 && p <= 24 && S.board[p] > 0;
+      setStatus(mine ? `${pointName(p)}의 말은 지금 주사위로 움직일 수 없어.` : '움직일 내 말을 눌러.');
+      render();
+    }
+    return;
+  }
   const opts = S.ts.options;
   if (S.selected !== null) {
     const o = opts.find((x) => x.from === S.selected && x.to === p);
@@ -436,6 +474,14 @@ async function onPoint(p) {
   } else {
     S.selected = null;
   }
+  render();
+}
+
+async function onSwap() {
+  if (S.phase !== 'move' || !tapMode() || S.warning || remainingDice().length < 2) return;
+  S.swap = !S.swap;
+  const [l] = remainingDice();
+  setStatus(`주사위 순서를 바꿨어. 이제 말을 누르면 ${l}만큼 가.`);
   render();
 }
 
@@ -715,6 +761,7 @@ function guarded(fn) {
 const act = {
   point: guarded(onPoint), roll: guarded(() => onRoll()), done: guarded(onDone), hint: guarded(onHint),
   undo: guarded(onUndo), newGame: guarded(newGame), coach: guarded(onCoach), double: guarded(() => onDouble()),
+  swap: guarded(onSwap),
 };
 // 화면 설정은 진행 중에도 바로 바꿀 수 있다(판 상태와 무관). 게임 방식(match)은 다음 새 게임부터.
 for (const btn of els.viewButtons) {
@@ -769,6 +816,10 @@ els.oppGrid.addEventListener('click', (e) => {
 });
 
 svg.addEventListener('click', (e) => {
+  if (e.target.closest('[data-dice]')) {
+    act.swap();
+    return;
+  }
   const t = e.target.closest('[data-point]');
   if (t) act.point(Number(t.dataset.point));
 });
@@ -806,10 +857,11 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'Enter') act.done();
   else if (e.key === 'h') act.hint();
   else if (e.key === 'd') act.double();
+  else if (e.key === 's') act.swap();
   else if (e.key === 'u' || (e.key === 'z' && (e.ctrlKey || e.metaKey))) act.undo();
 });
 
 // 자동 테스트(scripts/ui-smoke.mjs)용 읽기 전용 핸들.
-window.__palamedes = { state: S };
+window.__palamedes = { state: S, remaining: () => (S.dice && S.ts ? remainingDice() : []) };
 
 act.newGame();

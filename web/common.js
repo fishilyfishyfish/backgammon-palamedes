@@ -36,7 +36,7 @@ export const storage = {
 export const DEFAULT_BOT = 'palamedes';
 const OLD_AI = { nn: 'palamedes', baseline: 'minji', random: 'saessak', 5: 'palamedes', 4: 'jiu', 3: 'minji', 2: 'dalsu', 1: 'saessak' };
 export function loadView() {
-  const v = { color: 'white', home: 'right', ai: DEFAULT_BOT, coach: 'on', match: '0', ...storage.get('palamedes.view', {}) };
+  const v = { color: 'white', home: 'right', ai: DEFAULT_BOT, coach: 'on', match: '0', input: 'tap', ...storage.get('palamedes.view', {}) };
   if (OLD_AI[v.ai]) v.ai = OLD_AI[v.ai];
   return v;
 }

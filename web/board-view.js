@@ -7,6 +7,7 @@
 //   lastMove?: {side, steps}, hint?: {steps},   // steps는 그 진영 기준 좌표, hint는 사람 수
 //   cube?: {value, owner: null | 0 | 1},           // 더블링 큐브(두 트레이 사이). 가운데면 64로 표시
 //   focus?: 포인트                                  // 키보드로 고른 칸(사람 기준, 0 = 베어오프, 25 = 바)
+//   dice.swappable?: true면 주사위에 누를 수 있는 영역(data-dice)을 둔다(왼쪽·오른쪽 바꾸기)
 // }
 
 import { AI, BAR, HUMAN, idx } from './common.js';
@@ -171,6 +172,7 @@ export function renderBoard(svg, m) {
     parts.push(`<rect class="kbd-focus" x="${r[0]}" y="${r[1]}" width="${r[2]}" height="${r[3]}" rx="8"/>`);
   }
 
+  let diceHit = null;
   // 주사위: 사람은 오른쪽(홈 쪽), AI는 반대쪽 판 가운데.
   if (m.opening) {
     parts.push(dieSvg(X(G.rightX + 3 * G.PW), G.mid, m.opening[0], HUMAN, false));
@@ -181,6 +183,7 @@ export function renderBoard(svg, m) {
     const gap = 54;
     const x0 = cx - ((list.length - 1) * gap) / 2;
     list.forEach((f, i) => parts.push(dieSvg(x0 + i * gap, G.mid, f.d, side, f.used)));
+    if (m.dice.swappable) diceHit = [x0 - 30, G.mid - 30, (list.length - 1) * gap + 60, 60];
   }
 
   // 더블링 큐브: 두 트레이 사이. 소유자 쪽(사람 아래, AI 위)으로 조금 치우치고 그쪽 색으로 테두리.
@@ -202,6 +205,8 @@ export function renderBoard(svg, m) {
   }
   parts.push(`<rect class="hit" data-point="${BAR}" x="${RX(G.barX, G.barW)}" y="${G.top}" width="${G.barW}" height="${G.bottom - G.top}"/>`);
   parts.push(`<rect class="hit" data-point="0" x="${RX(G.trayX - 6, G.trayW + 12)}" y="${G.mid}" width="${G.trayW + 12}" height="${G.bottom - G.mid + 12}"/>`);
+  // 주사위 영역은 포인트 터치 영역보다 위.
+  if (diceHit) parts.push(`<rect class="hit dice-hit" data-dice="swap" x="${diceHit[0]}" y="${diceHit[1]}" width="${diceHit[2]}" height="${diceHit[3]}" rx="8"><title>주사위 순서 바꾸기</title></rect>`);
 
   svg.setAttribute('viewBox', VIEWBOX);
   svg.innerHTML = parts.join('');
