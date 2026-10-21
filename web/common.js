@@ -3,11 +3,9 @@
 export const HUMAN = 0;
 export const AI = 1;
 export const BAR = 25;
-// 엔진 선택(rank_moves_json 등의 engine 인자).
-export const ENGINE_BASELINE = 0;
+// 엔진 선택(rank_moves_json 등의 engine 인자). 0 = 기준선(손 평가)은 웹에서 쓰지 않는다.
 export const ENGINE_NN = 1;
-// 탐색 깊이(ply 인자). 신경망 대국·힌트·경고·분석은 2수, 기준선 AI는 3단계 그대로 1수.
-export const PLY_BASELINE = 1;
+// 탐색 깊이(ply 인자). 힌트·경고·분석은 2수. AI 수는 난이도대로(ai_move_json).
 export const PLY_NN = 2;
 // 실수 등급 임계값(GNU 백개먼 기본값). 엔진(analysis.rs)과 같아야 한다.
 export const BAD = 0.08;
@@ -33,8 +31,13 @@ export const storage = {
 
 // 화면 설정. color: 사람 말 색('white'|'black'), home: 사람 홈 위치('right'|'left'),
 // ai: 상대('nn' | 'baseline' | 'random'), coach: 친절 모드('on' | 'off'), match: 매치 길이('0' = 머니, '3' | '5' | '7').
+// ai: 난이도 '1'..'5'(5 = 엔진 그대로). 예전 값(nn | baseline | random)은 5 | 3 | 1로 읽는다.
+const OLD_AI = { nn: '5', baseline: '3', random: '1' };
 export function loadView() {
-  return { color: 'white', home: 'right', ai: 'nn', coach: 'on', match: '0', ...storage.get('palamedes.view', {}) };
+  const v = { color: 'white', home: 'right', ai: '5', coach: 'on', match: '0', ...storage.get('palamedes.view', {}) };
+  if (OLD_AI[v.ai]) v.ai = OLD_AI[v.ai];
+  if (!['1', '2', '3', '4', '5'].includes(v.ai)) v.ai = '5';
+  return v;
 }
 
 // 엔진 Worker와 {id, fn, args} RPC.

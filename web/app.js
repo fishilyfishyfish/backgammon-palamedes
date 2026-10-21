@@ -1,10 +1,10 @@
-// 대국 화면: 사람 vs AI(신경망, 기준선 엔진, 랜덤 중 선택). 규칙 판단은 전부 엔진(Worker)에 맡긴다.
+// 대국 화면: 사람 vs AI(신경망, 난이도 1~5). 규칙 판단은 전부 엔진(Worker)에 맡긴다.
 // 엔진 진영은 사람 = 0, AI = 1로 고정이고, 말 색과 판 방향은 화면 설정(S.view)일 뿐이다.
 // 더블링 큐브: 굴리기 전에 더블할 수 있다. 머니 게임 또는 n점 매치(크로포드 규칙).
 // 친절 모드(S.view.coach === 'on'): 수·큐브 힌트, 나쁨 이상의 수·큐브 판단 전 경고와 이유, 기보에 등급 표시.
 
 import {
-  AI, BAD, ENGINE_BASELINE, ENGINE_NN, BAR, HUMAN, PLY_BASELINE, PLY_NN,
+  AI, BAD, ENGINE_NN, BAR, HUMAN, PLY_NN,
   applyStep, createEngine, ctxJson, escapeHtml, gradeClass, gradeOf, loadView, saveGame, storage,
 } from './common.js';
 import { diceList, renderBoard } from './board-view.js';
@@ -80,14 +80,14 @@ const isCrawford = () => isMatch() && !S.match.post && (needs(HUMAN) === 1 || ne
 const matchOver = () => isMatch() && (needs(HUMAN) <= 0 || needs(AI) <= 0);
 const ctx = () => ctxJson(S.cube, S.match);
 function canDouble(side) {
-  if (S.view.ai === 'random' && side === AI) return false;
   if (isCrawford() || S.cube.owner === other(side) || S.cube.value >= 64) return false;
   return !isMatch() || S.cube.value < needs(side);
 }
-function aiEngine() {
-  return S.view.ai === 'baseline' ? [ENGINE_BASELINE, PLY_BASELINE] : [ENGINE_NN, PLY_NN];
-}
-const cubeDecision = (side, engine = ENGINE_NN) => call('cube_decision_json', S.board, side, engine, ctx());
+// AI 난이도(1..5)와 잡음용 난수 시드. 난이도가 낮을수록 사람처럼 실수한다(engine/src/level.rs).
+const aiLevel = () => Number(S.view.ai) || 5;
+const seed32 = () => crypto.getRandomValues(new Uint32Array(1))[0];
+const aiCube = (doubler) => call('ai_cube_json', S.board, doubler, aiLevel(), seed32(), ctx());
+const cubeDecision = (side) => call('cube_decision_json', S.board, side, ENGINE_NN, ctx());
 const actionName = { no_double: '노 더블', double_take: '더블/테이크', double_pass: '더블/패스', too_good: '너무 좋아서 노 더블(개먼 노림)' };
 
 // 지금 누를 수 있는 칸: 출발점을 안 골랐으면 출발점들, 골랐으면 그 도착점들. 바 → 높은 포인트 → 베어오프 순.
@@ -298,7 +298,7 @@ function persist() {
   saveGame({
     id: S.gameId,
     date: new Date(S.gameId).toISOString(),
-    ai: S.view.ai,
+    ai: `lv${aiLevel()}`,
     match: S.matchAtStart && S.matchAtStart.length ? S.matchAtStart : null,
     entries: S.history.map(({ grade, mark, ...rest }) => rest),
     result: S.result,
@@ -478,11 +478,7 @@ async function onDouble(force = false) {
   S.cubeHint = null;
   pushCube(HUMAN, 'double', grade);
   // AI 응답: 내 입장(더블한 쪽)에서 계산한 "상대가 받아야 하는가".
-  let take = true;
-  if (S.view.ai !== 'random') {
-    const [engine] = aiEngine();
-    take = (await cubeDecision(HUMAN, engine)).take;
-  }
+  const { take } = await aiCube(HUMAN);
   pushCube(AI, take ? 'take' : 'pass');
   if (take) {
     S.cube = { value: S.cube.value * 2, owner: AI };
@@ -551,11 +547,10 @@ async function onCoach(action) {
 async function aiTurn(dice = null) {
   Object.assign(S, { phase: 'ai', turn: AI, selected: null, ts: null, hint: null, cubeHint: null, warning: null });
   if (!dice && canDouble(AI)) {
-    const [engine] = aiEngine();
-    const dec = await cubeDecision(AI, engine);
-    if (dec.double) {
+    if ((await aiCube(AI)).double) {
       pushCube(AI, 'double');
-      S.cubeOffer = dec;
+      // 친절 모드 판단·경고는 난이도와 무관하게 엔진 판단으로 한다.
+      S.cubeOffer = await cubeDecision(AI);
       S.phase = 'cube';
       S.dice = null;
       persist();
@@ -573,14 +568,7 @@ async function aiRollAndMove(dice = null) {
   render();
   await sleep(450);
   const before = S.board.slice();
-  let m;
-  if (S.view.ai === 'random') {
-    const moves = await call('legal_moves_json', S.board, AI, dice[0], dice[1]);
-    m = moves[Math.floor(Math.random() * moves.length)];
-  } else {
-    const [engine, ply] = aiEngine();
-    m = (await call('rank_moves_json', S.board, AI, dice[0], dice[1], engine, ply, ctx()))[0];
-  }
+  const m = await call('ai_move_json', S.board, AI, dice[0], dice[1], aiLevel(), seed32(), ctx());
   if (m.steps.length === 0) {
     setStatus(`AI ${dice[0]}-${dice[1]}: 둘 수 있는 수가 없어.`);
     await sleep(700);

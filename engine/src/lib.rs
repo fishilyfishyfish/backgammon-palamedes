@@ -9,6 +9,7 @@ pub mod cube;
 pub mod eval;
 pub mod explain;
 pub mod features;
+pub mod level;
 pub mod matchplay;
 pub mod movegen;
 pub mod nn;
