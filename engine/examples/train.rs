@@ -1,6 +1,6 @@
 //! TD(λ) 자기대국 학습.
 //! `cargo run --release --example train -- [key=value ...]`
-//! key: games, hidden, ext(1이면 손 특징 입력), lambda, lr, lr_end, explore, threads, gpt(스레드당 라운드 판 수), seed,
+//! key: games, hidden, ext(1 = 손 특징, 2 = 손 특징 2), lambda, lr, lr_end, explore, threads, gpt(스레드당 라운드 판 수), seed,
 //!      eval_every(판), eval_pairs, out(저장 경로), init(이어서 학습할 가중치)
 
 use std::fs::File;
@@ -24,10 +24,10 @@ fn main() {
             "games" => cfg.games = v.parse().unwrap(),
             "hidden" => cfg.hidden = v.parse().unwrap(),
             "ext" => {
-                cfg.inputs = if v == "1" {
-                    palamedes::nn::INPUTS_EXT
-                } else {
-                    palamedes::nn::INPUTS
+                cfg.inputs = match v {
+                    "1" => palamedes::nn::INPUTS_EXT,
+                    "2" => palamedes::nn::INPUTS_EXT2,
+                    _ => palamedes::nn::INPUTS,
                 }
             }
             "lambda" => cfg.lambda = v.parse().unwrap(),

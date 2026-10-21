@@ -7,6 +7,13 @@
 //! 확장 입력(209개 = 196 + 13): 위에 손 특징을 더한다. 진영마다(굴릴 쪽, 상대) 6개
 //! [핍/100, 가장 뒤 말의 탈출 굴림/36, 블롯이 맞을 수 있는 굴림/36(막힌 칸 무시), 프라임 뒤에 갇힌 말/5,
 //! 가장 긴 연속 포인트/6, 홈보드 포인트/6], 그리고 레이스면 1. 수 생성 없이 계산한다(학습 속도 때문).
+//!
+//! 확장 입력 2(221개 = 196 + 25, `encode_ext2`): 진영마다 12개
+//! [핍/100, 가장 뒤 말의 탈출 굴림/36, 막힌 칸을 반영한 "블롯이 하나라도 맞는" 굴림/36, "블롯 둘 이상이 맞을 수 있는" 굴림/36,
+//! 맞을 때 잃는 핍 기댓값/10, 프라임 뒤에 갇힌 말/5, 가장 긴 연속 포인트/6, 홈보드 포인트/6,
+//! 갇힘 정도(내 15..=24 포인트에서 앞 12칸의 상대 포인트를 지나는 굴림의 최솟값/36), 가장 뒤 앵커((p − 18)/6),
+//! 접촉이 끝날 때까지 필요한 핍/100, 바에 말이 있으면 한 말이 못 들어올 확률((상대 홈 포인트/6)²)] + 레이스면 1.
+//! gnubg 입력 설명(공개 문서)의 개념을 참고해 직접 구현했다(코드는 쓰지 않음).
 //! 가중치 파일의 입력 수로 어느 인코딩인지 정한다(`Net::encode`).
 
 // 행렬 인덱스를 직접 쓰는 편이 순전파·역전파 식과 대응이 잘 보인다.
@@ -21,6 +28,9 @@ pub const INPUTS: usize = 196;
 /// 손 특징을 더한 입력 수.
 pub const INPUTS_EXT: usize = INPUTS + 2 * EXT_PER_SIDE + 1;
 const EXT_PER_SIDE: usize = 6;
+/// 손 특징 2를 더한 입력 수.
+pub const INPUTS_EXT2: usize = INPUTS + 2 * EXT2_PER_SIDE + 1;
+const EXT2_PER_SIDE: usize = 12;
 pub const OUTPUTS: usize = 5;
 const PER_SIDE: usize = 98;
 const MAGIC: &[u8; 4] = b"PNN1";
@@ -129,9 +139,14 @@ fn roll_distances(d1: u8, d2: u8) -> ([u8; 4], usize) {
 /// 가장 뒤(바 포함) 내 말이 앞쪽 12칸 안의 상대 포인트를 모두 지나갈 수 있는 굴림 수(36 중).
 /// 한 말만 움직이고 중간·도착 칸이 상대 포인트면 안 된다. 앞에 막는 포인트가 없으면 36.
 fn escapes(me: &[u8; 26], op: &[u8; 26]) -> u32 {
-    let Some(back) = (1..=BAR).rev().find(|&p| me[p] > 0) else {
-        return 36;
-    };
+    match (1..=BAR).rev().find(|&p| me[p] > 0) {
+        Some(back) => escapes_from(back, op),
+        None => 36,
+    }
+}
+
+/// 내 포인트 `back`(바 25 포함)의 말 하나가 앞 12칸 안의 상대 포인트를 모두 지나갈 수 있는 굴림 수(36 중).
+fn escapes_from(back: usize, op: &[u8; 26]) -> u32 {
     // 내 포인트 q에 상대 포인트가 있으면 막힘. 상대 기준 25 − q.
     let blocked = |q: usize| (1..=24).contains(&q) && op[25 - q] >= 2;
     let lowest = (back.saturating_sub(12).max(1)..back).find(|&q| blocked(q));
@@ -201,6 +216,113 @@ fn exposure(me: &[u8; 26], op: &[u8; 26]) -> u32 {
     n
 }
 
+/// 막힌 칸(내 포인트, 말 2개 이상)을 반영한 상대의 히트 가능성: (블롯이 하나라도 맞는 굴림, 서로 다른 블롯
+/// 둘 이상을 맞힐 수 있는 굴림, 맞을 때 잃는 핍(25 − p)의 굴림별 최댓값 합). 모두 36 기준.
+/// 상대가 바에 말이 있으면 바에서 들어오며 맞히는 경우만 센다(들어온 뒤 다른 말로 맞히는 경우는 무시, 어림).
+fn hits(me: &[u8; 26], op: &[u8; 26]) -> (u32, u32, u32) {
+    let blots: Vec<usize> = (1..=24).filter(|&p| me[p] == 1).collect();
+    if blots.is_empty() {
+        return (0, 0, 0);
+    }
+    let blocked = |x: usize| (1..=24).contains(&x) && me[x] >= 2;
+    // 공격하는 상대 말의 내 기준 위치(바 = 0).
+    let attackers: Vec<usize> = if op[BAR] > 0 {
+        vec![0]
+    } else {
+        (1..=24).filter(|&q| op[25 - q] > 0).collect()
+    };
+    // q에서 d1, d2(더블이면 d1 최대 4번)로 정확히 p에 닿을 수 있는가(중간 착지 칸이 막히면 안 됨).
+    let reach = |q: usize, p: usize, d1: usize, d2: usize| -> bool {
+        let d = p - q;
+        if d1 == d2 {
+            (1..=4).any(|k| k * d1 == d && (1..k).all(|j| !blocked(q + j * d1)))
+        } else {
+            d == d1 || d == d2 || (d == d1 + d2 && (!blocked(q + d1) || !blocked(q + d2)))
+        }
+    };
+    let (mut one, mut two, mut loss) = (0, 0, 0);
+    for d1 in 1..=6usize {
+        for d2 in d1..=6usize {
+            let w = if d1 == d2 { 1 } else { 2 };
+            let hit: Vec<usize> = blots
+                .iter()
+                .copied()
+                .filter(|&p| attackers.iter().any(|&q| q < p && reach(q, p, d1, d2)))
+                .collect();
+            if !hit.is_empty() {
+                one += w;
+                loss += w * hit.iter().map(|&p| 25 - p as u32).max().unwrap();
+            }
+            if hit.len() >= 2 {
+                two += w;
+            }
+        }
+    }
+    (one, two, loss)
+}
+
+/// 확장 입력 2: `encode` + 손 특징 2(모듈 설명).
+pub fn encode_ext2(b: &Board, on_roll: Side) -> Sparse {
+    let mut x = encode(b, on_roll);
+    for (k, s) in [on_roll, on_roll.opp()].into_iter().enumerate() {
+        let me = &b.pos[s.idx()];
+        let op = &b.pos[s.opp().idx()];
+        let (prime, _) = longest_prime(me);
+        let (op_prime, op_lo) = longest_prime(op);
+        let trapped = if op_prime >= 4 {
+            me[(25 - op_lo as usize + 1)..=BAR]
+                .iter()
+                .map(|&n| n as u32)
+                .sum::<u32>()
+        } else {
+            0
+        };
+        let home = (1..=6).filter(|&p| me[p] >= 2).count();
+        let (one, two, loss) = hits(me, op);
+        let contain = (15..=24).map(|p| escapes_from(p, op)).min().unwrap();
+        let back_anchor = (19..=24).rev().find(|&p| me[p] >= 2).map_or(0, |p| p - 18);
+        // 상대의 가장 뒤 말(내 기준 가장 낮은 번호, 상대 바 = 0)보다 위에 있는 내 말이 그 아래로 내려가는 데 필요한 핍.
+        let op_back = if op[BAR] > 0 {
+            0
+        } else {
+            (1..=24).find(|&q| op[25 - q] > 0).unwrap_or(25)
+        };
+        let to_break: usize = (op_back + 1..=BAR)
+            .map(|p| me[p] as usize * (p - op_back))
+            .sum();
+        let op_home = (1..=6).filter(|&p| op[p] >= 2).count() as f32;
+        let enter = if me[BAR] > 0 {
+            (op_home / 6.0).powi(2)
+        } else {
+            0.0
+        };
+        let vals = [
+            b.pips(s) as f32 / 100.0,
+            escapes(me, op) as f32 / 36.0,
+            one as f32 / 36.0,
+            two as f32 / 36.0,
+            loss as f32 / 360.0,
+            trapped as f32 / 5.0,
+            prime as f32 / 6.0,
+            home as f32 / 6.0,
+            contain as f32 / 36.0,
+            back_anchor as f32 / 6.0,
+            to_break as f32 / 100.0,
+            enter,
+        ];
+        let base = INPUTS + k * EXT2_PER_SIDE;
+        for (j, v) in vals.into_iter().enumerate() {
+            if v != 0.0 {
+                x.push(((base + j) as u16, v));
+            }
+        }
+    }
+    if crate::eval::is_race(b) {
+        x.push(((INPUTS_EXT2 - 1) as u16, 1.0));
+    }
+    x
+}
+
 #[inline]
 fn sigmoid(z: f32) -> f32 {
     1.0 / (1.0 + (-z).exp())
@@ -226,7 +348,10 @@ impl Net {
     }
 
     pub fn with_inputs(inputs: usize, hidden: usize, seed: u64) -> Net {
-        assert!(inputs == INPUTS || inputs == INPUTS_EXT, "inputs");
+        assert!(
+            [INPUTS, INPUTS_EXT, INPUTS_EXT2].contains(&inputs),
+            "inputs"
+        );
         let mut rng = crate::rng::Rng::new(seed);
         let mut u =
             |scale: f32| ((rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0) * scale;
@@ -244,10 +369,10 @@ impl Net {
 
     /// 이 망의 입력 형식으로 인코딩.
     pub fn encode(&self, b: &Board, on_roll: Side) -> Sparse {
-        if self.inputs == INPUTS_EXT {
-            encode_ext(b, on_roll)
-        } else {
-            encode(b, on_roll)
+        match self.inputs {
+            INPUTS_EXT => encode_ext(b, on_roll),
+            INPUTS_EXT2 => encode_ext2(b, on_roll),
+            _ => encode(b, on_roll),
         }
     }
 
@@ -359,7 +484,7 @@ impl Net {
             r.read_exact(&mut b)?;
             *d = u32::from_le_bytes(b) as usize;
         }
-        let inputs_ok = dims[0] == INPUTS || dims[0] == INPUTS_EXT;
+        let inputs_ok = [INPUTS, INPUTS_EXT, INPUTS_EXT2].contains(&dims[0]);
         if !inputs_ok || dims[2] != OUTPUTS || dims[1] == 0 || dims[1] > 4096 {
             return Err(bad("dimension mismatch"));
         }

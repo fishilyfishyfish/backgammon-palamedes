@@ -211,3 +211,38 @@ fn extended_net_roundtrip() {
     let p = ev.evaluate(&Board::start(), Side::White);
     assert!(p.win > 0.0 && p.win < 1.0);
 }
+
+#[test]
+fn extended_encoding_2() {
+    use palamedes::nn::{INPUTS_EXT2, encode_ext2};
+    for (b, s) in random_positions(300, 9) {
+        let x = encode_ext2(&b, s);
+        assert_eq!(x, encode_ext2(&b.swapped(), s.opp()));
+        assert!(
+            x.iter()
+                .all(|&(i, v)| (i as usize) < INPUTS_EXT2 && v > 0.0 && v.is_finite() && v < 5.0)
+        );
+    }
+    let get = |x: &[(u16, f32)], k: usize| {
+        x.iter()
+            .find(|(i, _)| *i as usize == INPUTS + k)
+            .map_or(0.0, |e| e.1)
+    };
+    // 블롯 하나(백 20)와 6칸 뒤 상대 말(백 기준 14): 막힌 칸이 없으면 6을 만드는 굴림 17개, 잃는 핍 5.
+    let mut b = Board::empty();
+    b.pos[0][20] = 1;
+    b.pos[0][0] = 14;
+    b.pos[1][25 - 14] = 1;
+    b.pos[1][0] = 14;
+    let x = encode_ext2(&b, Side::White);
+    assert!((get(&x, 2) - 17.0 / 36.0).abs() < 1e-6);
+    assert_eq!(get(&x, 3), 0.0);
+    assert!((get(&x, 4) - 17.0 * 5.0 / 360.0).abs() < 1e-6);
+    // 백 17·18에 포인트를 만들면 15(=14+1), 16 경유 조합 일부가 막힌다: 3-3(17 착지)·2-2(16, 18)·4-2/2-4 중 16 경유만 남음.
+    b.pos[0][0] = 10;
+    b.pos[0][17] = 2;
+    b.pos[0][18] = 2;
+    let x = encode_ext2(&b, Side::White);
+    // 6이 하나라도(11) + 5-1(15 또는 19 경유, 19 안 막힘: 2) + 4-2(16 또는 18 경유, 16 안 막힘: 2) + 2-2(16·18 막힘: 0) + 3-3(17 막힘: 0) = 15
+    assert!((get(&x, 2) - 15.0 / 36.0).abs() < 1e-6);
+}
