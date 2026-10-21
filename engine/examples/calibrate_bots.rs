@@ -1,7 +1,7 @@
 //! 봇 레이팅 맞추기. 기준 상대 = 신경망 1수. 최강 봇(엔진 2수)을 1800으로 두고 기준 상대의 레이팅을 구한 뒤,
 //! 나머지 봇은 기준 상대와 둔 승률(큐브 없는 단판)이 FIBS 공식의 목표 승률이 되도록 잡음 크기를 이분 탐색한다.
 //! 잡음 0에서도 너무 약하면 습관 배율을 줄인다. 결과(잡음·습관·큐브 잡음·잰 레이팅)를 bots.json에 쓴다.
-//! `cargo run --release --example calibrate_bots -- [탐색 쌍 수] [검증 쌍 수] [출력 경로]`
+//! `cargo run --release --example calibrate_bots -- [탐색 쌍 수] [검증 쌍 수] [출력 경로] [봇 id,쉼표 구분(없으면 전부)]`
 
 use palamedes::bots::{Bot, BotPlayer, Style, bots, rating_diff, win_prob};
 use palamedes::nn::NnEval;
@@ -38,6 +38,9 @@ fn main() {
     let pairs: u32 = args.first().and_then(|s| s.parse().ok()).unwrap_or(1000);
     let verify: u32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(3000);
     let out = args.get(2).cloned().unwrap_or("weights/bots.json".into());
+    let only: Option<Vec<String>> = args
+        .get(3)
+        .map(|s| s.split(',').map(String::from).collect());
     let mut list: Vec<Bot> = bots().to_vec();
     let top = list.last().unwrap().clone();
     assert_eq!(top.style, Style::ENGINE, "the strongest bot is the engine");
@@ -54,6 +57,9 @@ fn main() {
     list.last_mut().unwrap().measured = Some([top.rating as f32, 0.0]);
     let n = list.len();
     for b in list.iter_mut().take(n - 1) {
+        if only.as_ref().is_some_and(|o| !o.contains(&b.id)) {
+            continue;
+        }
         let target = win_prob(b.rating as f32 - r_ref, 1.0);
         let base = b.style;
         let seed = 8_000_000 + b.rating as u64;
