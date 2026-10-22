@@ -131,6 +131,7 @@ pub fn money_decision(probs: &OutcomeProbs, owner: Owner, x: f32) -> CubeDecisio
 /// 접촉 국면 머니에서 노 더블 에퀴티에 더하는 보정. gnubg 2-ply 큐브 판단으로 채점해 보니(`cube_check`, 4000국면)
 /// 더블 결정 근처 국면에서 우리 노 더블이 gnubg보다 평균 0.038 낮아 더블을 너무 일찍 했다(잘못된 더블 205 vs 놓침 34).
 /// 0.03을 더하면 더블 쪽 손실이 판단당 0.0034 → 0.0021. 레이스는 오히려 나빠져서 넣지 않는다.
+/// 다른 국면 4000개 검증: 0.0029 → 0.0018. 예전 정책과 자기대국 +0.009 ± 0.006 ppg(16000판).
 pub const CONTACT_ND_ADJ: f32 = 0.03;
 
 /// `money_decision`과 같되 노 더블 에퀴티에 `nd_adj`를 더한다.
