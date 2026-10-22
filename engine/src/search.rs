@@ -140,6 +140,67 @@ impl<E: Evaluator> Evaluator for TwoPly<E> {
     }
 }
 
+/// 3수 평가기: `on_roll`의 21가지 주사위마다 후보를 1수로 순위 매겨 상위 `keep`개만 남기고(가지치기),
+/// 그것들을 2수로 평가해 최선을 고른 뒤 그 결과를 평균한다. 한 국면에 신경망 평가 약 2만 5천 번.
+#[derive(Clone, Debug)]
+pub struct ThreePly<E> {
+    pub inner: E,
+    pub objectives: [Objective; 2],
+    pub keep: usize,
+}
+
+impl<E> ThreePly<E> {
+    pub fn with_objective(inner: E, side: Side, obj: Objective, keep: usize) -> ThreePly<E> {
+        let mut objectives = [obj.swapped(); 2];
+        objectives[side.idx()] = obj;
+        ThreePly {
+            inner,
+            objectives,
+            keep,
+        }
+    }
+}
+
+impl<E: Evaluator + Clone> Evaluator for ThreePly<E> {
+    fn evaluate(&self, b: &Board, on_roll: Side) -> OutcomeProbs {
+        if let Some((w, pts)) = b.result() {
+            return OutcomeProbs::terminal(w, pts, on_roll);
+        }
+        let o = &self.objectives[on_roll.idx()];
+        let two = TwoPly {
+            inner: self.inner.clone(),
+            objectives: self.objectives,
+        };
+        let mut acc = OutcomeProbs::default();
+        for (d1, d2, w) in rolls() {
+            let mut cands: Vec<(Board, f32)> = legal_moves_with_boards(b, on_roll, d1, d2)
+                .into_iter()
+                .map(|(_, nb)| {
+                    let v = o.value(&evaluate_after(&self.inner, &nb, on_roll));
+                    (nb, v)
+                })
+                .collect();
+            cands.sort_by(|x, y| y.1.total_cmp(&x.1));
+            let best = cands
+                .iter()
+                .take(self.keep.max(1))
+                .map(|(nb, _)| evaluate_after(&two, nb, on_roll))
+                .max_by(|x, y| o.value(x).total_cmp(&o.value(y)))
+                .expect("at least the empty move");
+            acc.win += w * best.win;
+            acc.win_gammon += w * best.win_gammon;
+            acc.win_backgammon += w * best.win_backgammon;
+            acc.lose_gammon += w * best.lose_gammon;
+            acc.lose_backgammon += w * best.lose_backgammon;
+        }
+        acc.clamped()
+    }
+}
+
+/// 3수: 2수 순위 상위 몇 개를 3수로 다시 보고, 상대 응수는 1수 상위 몇 개만 2수로 본다.
+pub const THREE_PLY_KEEP: usize = 3;
+pub const THREE_PLY_REPLIES: usize = 3;
+
 /// 2수로 다시 평가할 후보: 1수 순위 상위 `keep`개 중 최선과의 차이가 `margin` 이하인 것.
 #[derive(Clone, Copy, Debug)]
 pub struct Filter {
@@ -156,7 +217,7 @@ impl Default for Filter {
     }
 }
 
-/// 탐색 설정: 깊이(1 또는 2)와 2수 후보 거르기.
+/// 탐색 설정: 깊이(1, 2, 3)와 2수 후보 거르기. 3수는 2수 결과 상위 `THREE_PLY_KEEP`개를 다시 본다.
 #[derive(Clone, Copy, Debug)]
 pub struct Search {
     pub ply: u8,
@@ -187,11 +248,16 @@ impl Search {
         Search { objective, ..self }
     }
 
+    pub const THREE_PLY: Search = Search {
+        ply: 3,
+        ..Search::TWO_PLY
+    };
+
     pub fn from_ply(ply: u8) -> Search {
-        if ply >= 2 {
-            Search::TWO_PLY
-        } else {
-            Search::ONE_PLY
+        match ply {
+            0 | 1 => Search::ONE_PLY,
+            2 => Search::TWO_PLY,
+            _ => Search::THREE_PLY,
         }
     }
 }
@@ -240,6 +306,28 @@ pub fn rank_moves_ply<E: Evaluator + Clone>(
         }
     }
     hi.sort_by(|a, b| b.equity.total_cmp(&a.equity));
+    if search.ply >= 3 && hi.len() >= 2 {
+        let deep3 =
+            ThreePly::with_objective(e.clone(), side.opp(), obj.swapped(), THREE_PLY_REPLIES);
+        let rest = hi.split_off(THREE_PLY_KEEP.min(hi.len()));
+        let mut top3: Vec<ScoredMove> = hi
+            .into_iter()
+            .map(|m| {
+                let probs = evaluate_after(&deep3, &m.board, side);
+                ScoredMove {
+                    equity: obj.value(&probs),
+                    probs,
+                    ply: 3,
+                    ..m
+                }
+            })
+            .collect();
+        top3.sort_by(|a, b| b.equity.total_cmp(&a.equity));
+        // 분석할 때 둔 수가 3수 후보 밖이면 2수 값 그대로 뒤에 둔다.
+        top3.extend(rest);
+        top3.extend(lo);
+        return top3;
+    }
     hi.extend(lo);
     hi
 }

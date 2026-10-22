@@ -209,3 +209,16 @@ fn trapped_counts_checkers_behind_prime() {
     // 백은 프라임이 없다.
     assert_eq!(trapped(k, w), 0);
 }
+
+#[test]
+fn three_ply_ranks_top_candidates_deeper() {
+    let e = NnEval::embedded();
+    let b = Board::start();
+    let r = rank_moves_ply(&e, &b, Side::White, 3, 1, Search::from_ply(3), None);
+    // 2수로 본 후보(1·2위는 항상) 중 상위 최대 3개가 3수 값으로 맨 앞에 온다. 31은 8/5 6/5.
+    let n3 = r.iter().take_while(|m| m.ply == 3).count();
+    assert!((2..=3).contains(&n3), "3-ply count {n3}");
+    assert!(r[n3..].iter().all(|m| m.ply < 3));
+    assert_eq!(format_move(r[0].mv.steps()), "8/5 6/5");
+    assert!(r[..n3].windows(2).all(|w| w[0].equity >= w[1].equity));
+}
