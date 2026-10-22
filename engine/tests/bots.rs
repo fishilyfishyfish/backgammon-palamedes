@@ -31,7 +31,7 @@ fn engine_bot_plays_engine_move_and_others_play_legal_moves() {
     let b = Board::start();
     for (d1, d2) in [(4, 2), (6, 5), (2, 1), (3, 3)] {
         let best =
-            rank_moves_ply(&e, &b, Side::White, d1, d2, Search::TWO_PLY, None).swap_remove(0);
+            rank_moves_ply(&e, &b, Side::White, d1, d2, Search::THREE_PLY, None).swap_remove(0);
         let top = &bots().last().unwrap().style;
         assert_eq!(
             choose_move(&e, &b, Side::White, d1, d2, top, None, &mut Rng::new(1)).board,
