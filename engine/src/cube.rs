@@ -125,7 +125,17 @@ pub struct CubeDecision {
 
 /// 머니 게임 큐브 판단. `probs`는 굴릴 쪽 기준(굴리기 전), `owner`는 Centered 또는 Me여야 더블할 수 있다.
 pub fn money_decision(probs: &OutcomeProbs, owner: Owner, x: f32) -> CubeDecision {
-    let nd = cubeful_equity(probs, owner, x);
+    money_decision_adj(probs, owner, x, 0.0)
+}
+
+/// 접촉 국면 머니에서 노 더블 에퀴티에 더하는 보정. gnubg 2-ply 큐브 판단으로 채점해 보니(`cube_check`, 4000국면)
+/// 더블 결정 근처 국면에서 우리 노 더블이 gnubg보다 평균 0.038 낮아 더블을 너무 일찍 했다(잘못된 더블 205 vs 놓침 34).
+/// 0.03을 더하면 더블 쪽 손실이 판단당 0.0034 → 0.0021. 레이스는 오히려 나빠져서 넣지 않는다.
+pub const CONTACT_ND_ADJ: f32 = 0.03;
+
+/// `money_decision`과 같되 노 더블 에퀴티에 `nd_adj`를 더한다.
+pub fn money_decision_adj(probs: &OutcomeProbs, owner: Owner, x: f32, nd_adj: f32) -> CubeDecision {
+    let nd = cubeful_equity(probs, owner, x) + nd_adj;
     let dt = 2.0 * cubeful_equity(probs, Owner::Opp, x);
     let dp = 1.0;
     let take = dt <= dp;
@@ -213,6 +223,20 @@ pub fn decide_shifted<E: crate::eval::Evaluator + Clone>(
     ctx: Option<crate::matchplay::MatchCtx>,
     x_shift: f32,
 ) -> CubeDecision {
+    decide_tuned(e, b, side, cube, ctx, x_shift, CONTACT_ND_ADJ)
+}
+
+/// `decide_shifted`와 같되 접촉 국면 머니의 노 더블 보정(`CONTACT_ND_ADJ`)을 직접 준다(비교 실험용).
+#[allow(clippy::too_many_arguments)]
+pub fn decide_tuned<E: crate::eval::Evaluator + Clone>(
+    e: &E,
+    b: &Board,
+    side: Side,
+    cube: CubeState,
+    ctx: Option<crate::matchplay::MatchCtx>,
+    x_shift: f32,
+    contact_nd_adj: f32,
+) -> CubeDecision {
     use crate::search::{Objective, TwoPly};
     let obj = ctx.map(Objective::Match).unwrap_or(Objective::Money);
     let probs =
@@ -220,7 +244,14 @@ pub fn decide_shifted<E: crate::eval::Evaluator + Clone>(
     let x = (cube_efficiency(b, side) + x_shift).clamp(0.0, 1.0);
     let owner = cube.owner_for(side);
     match ctx {
-        None => money_decision(&probs, owner, x),
+        None => {
+            let adj = if crate::eval::is_race(b) {
+                0.0
+            } else {
+                contact_nd_adj
+            };
+            money_decision_adj(&probs, owner, x, adj)
+        }
         Some(c) => crate::matchplay::MatchCtx {
             cube: cube.value,
             ..c

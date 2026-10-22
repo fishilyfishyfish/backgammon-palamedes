@@ -61,7 +61,7 @@ cd engine && cargo run --release --example train -- games=2000000 lr=0.02 lr_end
 cd engine && cargo run --release --example tune -- 600 hit_scale=0.8
 # 설명용 선형 대리 모델 다시 맞추기 (신경망 가중치를 바꾸면 같이) → weights/surrogate.json
 cd engine && cargo run --release --example fit_surrogate -- 2000 weights/surrogate.json 2
-# 큐브 정책 비교(신경망 2수 체커 플레이): 머니 게임 / n점 매치. 정책 janowski | money | never, 뒤에 :<보정>이면 큐브 효율 x에 더함
+# 큐브 정책 비교(신경망 2수 체커 플레이): 머니 게임 / n점 매치. 정책 janowski | money | never, 뒤에 :<보정>이면 큐브 효율 x에 더함, 그 뒤 :<값>은 접촉 노 더블 보정(기본 0.03)
 cd engine && cargo run --release --example cubematch -- money janowski never 2000
 cd engine && cargo run --release --example cubematch -- match janowski money 7 300
 # 신경망 보정 검사: 자기대국 국면 400개의 1수 예측 vs 롤아웃 1296회
@@ -72,6 +72,8 @@ cd engine && cargo run --release --example bot_mistakes -- 300
 cd engine && cargo run --release --example calibrate_bots -- 1000 3000 weights/bots.json
 # GNU 백개먼과 미러 대국(측정 전용, apt install gnubg 필요): 우리 플레이어 vs gnubg 깊이(0|1|2)
 cd engine && cargo run --release --example vs_gnubg -- nn@2 0 1000
+# 큐브 판단 채점(gnubg 2-ply 큐브 있는 평가 기준): [국면 수] [gnubg 깊이] [x 보정] [더블 여유들] [접촉 노 더블 보정] [시드]
+cd engine && cargo run --release --example cube_check -- 4000 2 0 0 0.03 777
 # 2수 증류(자기 2수 평가로 다시 학습), 베어오프 실수 측정(정확한 한쪽 베어오프 표 기준)
 cd engine && cargo run --release --example distill -- rounds=4 positions=1000000
 cd engine && cargo run --release --example bearoff_check -- 3000
@@ -112,7 +114,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `engine/src/nn.rs` | 신경망 `Net`(입력 인코딩 `encode`/손 특징 `encode_ext`, 희소 순전파·역전파, PNN1 저장 형식), `NnEval`(포함된 가중치) |
 | `engine/src/train.rs` | TD(λ) 자기대국: `self_play_game`(λ-리턴 표본), `train_round`(병렬 라운드) |
 | `engine/weights/` | `td.bin`(신경망 가중치), `surrogate.json`(설명용 대리 모델), `logs/`(학습 기록). 둘 다 엔진에 포함 |
-| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인), `fit_surrogate`, `cubematch`(큐브 정책), `met`(MET 출력), `calibrate`(신경망 보정 검사), `bot_mistakes`(봇별 실수 분포), `calibrate_bots`(봇 레이팅 맞추기), `vs_gnubg`(gnubg와 대국), `distill`(2수 증류), `bearoff_check`(베어오프 실수) |
+| `engine/examples/` | `bench`(성능), `match`(강도), `train`(학습), `tune`(손 가중치 비교), `openings`(시작 수 확인), `fit_surrogate`, `cubematch`(큐브 정책), `met`(MET 출력), `calibrate`(신경망 보정 검사), `bot_mistakes`(봇별 실수 분포), `calibrate_bots`(봇 레이팅 맞추기), `vs_gnubg`(gnubg와 대국, 공용 `support/gnubg.rs`), `cube_check`(gnubg로 큐브 판단 채점), `distill`(2수 증류), `bearoff_check`(베어오프 실수) |
 | `engine/src/analysis.rs` | 실수 등급 `Grade`(gnubg 기본 임계값), `analyze_move`, `hint` |
 | `engine/src/explain.rs` | 설명 층: 대리 모델 입력 `surrogate_inputs`, `Surrogate`(포함된 가중치), 주제별 기여도 `explain`, 템플릿 문장 |
 | `engine/src/cube.rs` | 큐브: Janowski 큐브 에퀴티, 머니 판단 `money_decision`, 국면 → 판단 `decide`, 근거 문장 `cube_reasons`, `CubeState` |
@@ -126,7 +128,7 @@ node scripts/ui-smoke.mjs 5 /tmp/shots
 | `web/board-view.js` | SVG 판 그리기(대국·분석 공용) |
 | `web/common.js` | 엔진 RPC, 저장소, 설정, 기보 저장, 공용 상수 |
 | `web/engine-worker.js` | WASM을 올린 module worker, `{id, fn, args}` RPC |
-| `scripts/build-wasm.sh`, `scripts/ui-smoke.mjs`, `scripts/gnubg-driver.py` | WASM 빌드, UI 자동 점검, gnubg 수 선택 서버(측정 전용) |
+| `scripts/build-wasm.sh`, `scripts/ui-smoke.mjs`, `scripts/gnubg-driver.py` | WASM 빌드, UI 자동 점검, gnubg 수 선택·큐브 판단 서버(측정 전용) |
 
 ## 설계 결정과 이유
 

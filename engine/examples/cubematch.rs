@@ -2,7 +2,7 @@
 //! `cargo run --release --example cubematch -- money <A> <B> [쌍 수]`
 //! `cargo run --release --example cubematch -- match <A> <B> <매치 길이> [쌍 수]`
 //! 정책: janowski(점수 반영), money(점수 무시, 머니 판단), never(더블 안 함, 항상 받음). 수는 모두 신경망 2수.
-//! 뒤에 `:<보정>`을 붙이면 큐브 효율 x에 보정을 더한다(예: janowski:+0.1).
+//! 뒤에 `:<보정>`을 붙이면 큐브 효율 x에 보정을 더한다(예: janowski:+0.1). `:<x 보정>:<노 더블 보정>`으로 접촉 국면 노 더블 보정도 바꾼다(기본 `CONTACT_ND_ADJ`).
 
 use std::time::Instant;
 
@@ -12,11 +12,15 @@ use palamedes::play::{CubeAgent, CubePolicy, play_cube_game, play_match};
 use palamedes::search::Search;
 
 fn agent(spec: &str) -> CubeAgent<NnEval> {
-    // "janowski" 또는 "janowski:+0.1"(큐브 효율 보정)
-    let (name, x_shift) = match spec.split_once(':') {
-        Some((n, x)) => (n, x.parse::<f32>().expect("x shift")),
-        None => (spec, 0.0),
-    };
+    // "janowski", "janowski:+0.1"(큐브 효율 보정), "janowski:0:0"(효율 보정:접촉 노 더블 보정)
+    let mut parts = spec.split(':');
+    let name = parts.next().unwrap();
+    let x_shift = parts
+        .next()
+        .map_or(0.0, |x| x.parse::<f32>().expect("x shift"));
+    let nd_adj = parts.next().map_or(palamedes::cube::CONTACT_ND_ADJ, |x| {
+        x.parse::<f32>().expect("nd adj")
+    });
     let policy = match name {
         "janowski" => CubePolicy::Janowski,
         "money" => CubePolicy::MoneyOnly,
@@ -29,6 +33,7 @@ fn agent(spec: &str) -> CubeAgent<NnEval> {
         policy,
         label: spec.into(),
         x_shift,
+        nd_adj,
     }
 }
 
